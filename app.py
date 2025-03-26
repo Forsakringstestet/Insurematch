@@ -6,10 +6,10 @@ from docx import Document
 from PyPDF2 import PdfReader
 from datetime import date, timedelta
 
-# === Utils ===
-
+# === KONSTANTER ===
 BASBELOPP_2025 = 58800
 
+# === UTILS ===
 def to_number(varde):
     try:
         if varde is None:
@@ -49,6 +49,15 @@ def extrahera_forsakringsgivare(text):
     match = re.search(r"(if|lf|trygg-hansa|moderna|protector|svedea|folksam|gjensidige|dina|lanförsäkringar)", text, re.IGNORECASE)
     return match.group(1).capitalize() if match else "Okänt"
 
+def läs_pdf_text(pdf_file):
+    reader = PdfReader(pdf_file)
+    text = ""
+    for page in reader.pages:
+        content = page.extract_text()
+        if content:
+            text += content + "\n"
+    return text
+# === EXTRAHERA PDF-VILLKOR ===
 def extrahera_villkor_ur_pdf(text):
     return {
         "försäkringsgivare": extrahera_forsakringsgivare(text),
@@ -60,6 +69,8 @@ def extrahera_villkor_ur_pdf(text):
         "premie": extrahera_belopp_flex(text, "premie|pris totalt|försäkringsbelopp"),
         "villkorsreferens": "PDF"
     }
+
+# === REKOMMENDATIONSGENERATOR ===
 def generera_rekommendationer(bransch, data):
     rekommendationer = []
 
@@ -117,16 +128,7 @@ def generera_rekommendationer(bransch, data):
     if not rekommendationer:
         return ["✅ Försäkringsskyddet verkar tillfredsställande utifrån den angivna branschen."]
     return rekommendationer
-
-def läs_pdf_text(pdf_file):
-    reader = PdfReader(pdf_file)
-    text = ""
-    for page in reader.pages:
-        content = page.extract_text()
-        if content:
-            text += content + "\n"
-    return text
-
+# === POÄNGSÄTTNING ===
 def poangsatt_villkor(villkor_list):
     df = pd.DataFrame(villkor_list)
 
@@ -164,6 +166,7 @@ def poangsatt_villkor(villkor_list):
         "Försäkringsgivare", "Premie", "Självrisk", "Egendom", "Ansvar", "Avbrott", "Undantag", "Källa", "Totalpoäng"
     ]]
 
+# === FÄRGSYSTEM FÖR POÄNG ===
 def färgschema(value):
     if value >= 8:
         return 'background-color: #b6fcb6'
@@ -174,6 +177,7 @@ def färgschema(value):
     else:
         return 'background-color: #fcb6b6'
 
+# === WORD-EXPORT ===
 def generera_word_dokument(data):
     doc = Document()
     doc.add_heading("Upphandlingsunderlag – Försäkringsjämförelse", level=1)
@@ -189,9 +193,7 @@ def generera_word_dokument(data):
     doc.save(buffer)
     buffer.seek(0)
     return buffer
-
-# === App ===
-
+# === HUVUDAPP ===
 if __name__ == "__main__":
     st.set_page_config(page_title="Försäkringsguide", page_icon="🛡️", layout="centered")
     st.title("🛡️ Försäkringsguide och Jämförelse")
@@ -226,23 +228,6 @@ if __name__ == "__main__":
             if saknade:
                 st.warning(f"⚠️ Saknade fält i {pdf.name}: {', '.join(saknade)}")
             st.markdown("---")
-
-        if villkorslista:
-            df = pd.DataFrame(poangsatt_villkor(villkorslista))
-            st.subheader("📊 Jämförelse med poängsättning")
-            st.dataframe(df.style.applymap(färgschema, subset=["Totalpoäng"]))
-
-            st.markdown("### 📉 Benchmarking")
-            st.markdown(f"**Snittpremie:** {df['Premie'].mean():,.0f} kr  |  **Snittsjälvrisk:** {df['Självrisk'].mean():,.0f} kr  |  **Snittpoäng:** {df['Totalpoäng'].mean():.2f}")
-
-            st.download_button(
-                "⬇️ Ladda ner sammanställning (Word)",
-                data=generera_word_dokument(df.to_dict(orient="records")),
-                file_name="jamforelse_upphandling.docx"
-            )
-
-            st.success(f"🔔 Påminnelse noterat: spara detta datum ({påminnelse_datum}) i din kalender")
-
 
         if villkorslista:
             df = pd.DataFrame(poangsatt_villkor(villkorslista))
