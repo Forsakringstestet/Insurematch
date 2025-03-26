@@ -69,6 +69,16 @@ def generera_word_dokument(data):
     buffer.seek(0)
     return buffer
 
+def färgschema(val):
+    if isinstance(val, (int, float)):
+        if val >= 0.85:
+            return 'background-color: #b6fcb6'
+        elif val >= 0.6:
+            return 'background-color: #fff6b0'
+        else:
+            return 'background-color: #fdd'
+    return ''
+
 def poangsatt_villkor(lista):
     normaliserade = []
     for rad in lista:
@@ -122,7 +132,7 @@ if menu == "🔍 Automatisk analys":
         if 'historik' not in st.session_state:
             st.session_state.historik = []
 
-    villkorslista = []
+        villkorslista = []
     st.markdown("### 📂 Tidigare jämförelser (denna session):")
     if st.session_state.historik:
         if st.button("🗑️ Rensa historik"):
@@ -133,9 +143,10 @@ if menu == "🔍 Automatisk analys":
             with st.expander(f"🗂️ Jämförelse {i+1} – {len(jämförelse)} bolag"):
                 df_hist = pd.DataFrame(poangsatt_villkor(jämförelse))
                 st.dataframe(df_hist.style.applymap(färgschema, subset=["Totalpoäng"]))
-    st.markdown("*Inga sparade ännu.*")
+    else:
+        st.markdown("*Inga sparade ännu.*")
 
-        for i, pdf in enumerate(uploaded_pdfs):
+    for i, pdf in enumerate(uploaded_pdfs):
             text = läs_pdf_text(pdf)
             st.markdown(f"#### 📄 Fil {i+1}: {pdf.name}")
             st.text_area(f"Innehåll ur {pdf.name}", value=text[:2000], height=200)
