@@ -120,13 +120,15 @@ if menu == "🔍 Automatisk analys":
 
     if uploaded_pdfs:
         if 'historik' not in st.session_state:
-        st.session_state.historik = []
+            st.session_state.historik = []
 
     villkorslista = []
     st.markdown("### 📂 Tidigare jämförelser (denna session):")
     if st.session_state.historik:
         for i, jämförelse in enumerate(st.session_state.historik):
-            st.markdown(f"- 🗂️ Jämförelse {i+1} – {len(jämförelse)} bolag")
+            with st.expander(f"🗂️ Jämförelse {i+1} – {len(jämförelse)} bolag"):
+                df_hist = pd.DataFrame(poangsatt_villkor(jämförelse))
+                st.dataframe(df_hist.style.applymap(färgschema, subset=["Totalpoäng"]))
     else:
         st.markdown("*Inga sparade ännu.*")
         for i, pdf in enumerate(uploaded_pdfs):
