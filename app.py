@@ -60,6 +60,63 @@ def extrahera_villkor_ur_pdf(text):
         "premie": extrahera_belopp_flex(text, "premie|pris totalt|försäkringsbelopp"),
         "villkorsreferens": "PDF"
     }
+def generera_rekommendationer(bransch, data):
+    rekommendationer = []
+
+    ansvar = to_number(data.get("ansvar", 0))
+    egendom = to_number(data.get("egendom", 0))
+    avbrott = to_number(data.get("avbrott", 0))
+    premie = to_number(data.get("premie", 0))
+
+    if bransch == "it":
+        if ansvar < 5_000_000:
+            rekommendationer.append("🔍 Ansvarsförsäkring bör täcka minst 5–10 Mkr för IT-fel – överväg höjning.")
+        if "cyber" not in data.get("undantag", "").lower() and "cyber" not in data.get("villkorsreferens", "").lower():
+            rekommendationer.append("💻 Ingen cyberförsäkring hittades – viktigt skydd vid dataintrång och driftstopp.")
+        if egendom < 100_000:
+            rekommendationer.append("🖥️ Egendomsförsäkring (ex. datorer, servrar) verkar låg – kontrollera värdet.")
+
+    elif bransch == "industri":
+        if ansvar < 10_000_000:
+            rekommendationer.append("🛠️ Produkt-/ansvarsförsäkring bör vara minst 10 Mkr – justera vid export/högrisk.")
+        if egendom < 500_000:
+            rekommendationer.append("🏭 Egendom (maskiner, byggnad) verkar låg – risk för underförsäkring.")
+        if avbrott < 0.1 * premie:
+            rekommendationer.append("📉 Avbrottsförsäkring bör täcka 10–30% av årsomsättning – verkar saknas eller låg.")
+
+    elif bransch == "transport":
+        if ansvar < 5_000_000:
+            rekommendationer.append("🚚 Ansvarsförsäkring för lastning/lager bör vara minst 5 Mkr.")
+        if avbrott == 0:
+            rekommendationer.append("📦 Ingen avbrottsförsäkring funnen – viktigt vid fordons- eller logistikstopp.")
+
+    elif bransch == "konsult":
+        if ansvar < 2_000_000:
+            rekommendationer.append("📊 Ansvarsförsäkring (förmögenhetsskada) bör vara minst 2–5 Mkr – saknas/låg?")
+        if "rättsskydd" not in data.get("undantag", "").lower():
+            rekommendationer.append("⚖️ Kontrollera att rättsskydd ingår – viktigt vid kundtvister.")
+
+    elif bransch == "bygg":
+        if ansvar < 10_000_000:
+            rekommendationer.append("🏗️ AB04/ABT06 kräver ansvar minst 10 Mkr – höj beloppet.")
+        if "entreprenad" not in data.get("villkorsreferens", "").lower():
+            rekommendationer.append("🧱 Saknar entreprenadförsäkring (allrisk) – krävs för byggprojekt.")
+
+    elif bransch == "handel":
+        if egendom < 300_000:
+            rekommendationer.append("🏬 Lågt egendomsskydd – kontrollera lagervärde och inventarier.")
+        if avbrott == 0:
+            rekommendationer.append("🚫 Avbrottsförsäkring saknas – kritiskt vid driftstopp.")
+
+    elif bransch == "vård":
+        if ansvar < 10_000_000:
+            rekommendationer.append("💉 Vårdansvar bör täcka minst 10 Mkr utöver patientförsäkring.")
+        if "patient" not in data.get("villkorsreferens", "").lower():
+            rekommendationer.append("🩺 Ingen patientförsäkring hittad – lagkrav enligt patientskadelagen.")
+
+    if not rekommendationer:
+        return ["✅ Försäkringsskyddet verkar tillfredsställande utifrån den angivna branschen."]
+    return rekommendationer
 
 def läs_pdf_text(pdf_file):
     reader = PdfReader(pdf_file)
@@ -143,6 +200,10 @@ if __name__ == "__main__":
     påminnelse_datum = st.date_input("🔔 Vill du få en påminnelse innan förnyelse?", value=date.today() + timedelta(days=300))
 
     if uploaded_pdfs:
+        vald_bransch = st.selectbox("📂 Välj bransch för rekommendationer", [
+            "it", "industri", "transport", "konsult", "handel", "bygg", "vård"
+        ], index=0)
+
         villkorslista = []
         st.markdown("### 📂 Tidigare jämförelser:")
 
@@ -155,10 +216,33 @@ if __name__ == "__main__":
             villkorslista.append(extrakt)
 
             st.json(extrakt)
+
+            rekommendationer = generera_rekommendationer(vald_bransch, extrakt)
+            with st.expander("💡 Rekommenderade förbättringar"):
+                for r in rekommendationer:
+                    st.markdown(f"- {r}")
+
             saknade = [k for k, v in extrakt.items() if to_number(v) == 0 and k != "undantag"]
             if saknade:
                 st.warning(f"⚠️ Saknade fält i {pdf.name}: {', '.join(saknade)}")
             st.markdown("---")
+
+        if villkorslista:
+            df = pd.DataFrame(poangsatt_villkor(villkorslista))
+            st.subheader("📊 Jämförelse med poängsättning")
+            st.dataframe(df.style.applymap(färgschema, subset=["Totalpoäng"]))
+
+            st.markdown("### 📉 Benchmarking")
+            st.markdown(f"**Snittpremie:** {df['Premie'].mean():,.0f} kr  |  **Snittsjälvrisk:** {df['Självrisk'].mean():,.0f} kr  |  **Snittpoäng:** {df['Totalpoäng'].mean():.2f}")
+
+            st.download_button(
+                "⬇️ Ladda ner sammanställning (Word)",
+                data=generera_word_dokument(df.to_dict(orient="records")),
+                file_name="jamforelse_upphandling.docx"
+            )
+
+            st.success(f"🔔 Påminnelse noterat: spara detta datum ({påminnelse_datum}) i din kalender")
+
 
         if villkorslista:
             df = pd.DataFrame(poangsatt_villkor(villkorslista))
