@@ -1,16 +1,14 @@
 import streamlit as st
 import pandas as pd
-import json
 import re
 from io import BytesIO
 from docx import Document
 from PyPDF2 import PdfReader
 from datetime import date, timedelta
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 # === Funktioner ===
 
+# Funktion för att konvertera text till nummer (försäkringsbelopp etc.)
 def to_number(varde):
     try:
         if varde is None:
@@ -20,38 +18,32 @@ def to_number(varde):
         s = str(varde).lower()
         s = s.replace(" ", "").replace("kr", "").replace("sek", "")
         s = s.replace(",", ".")  # hantera t.ex. 1,5m som 1.5m
-
-        # Hantera miljoner och tusental (MSEK, m, k)
         if "msek" in s:
             return int(float(s.replace("msek", "")) * 1_000_000)
         elif "m" in s:
             return int(float(s.replace("m", "")) * 1_000_000)
         elif "k" in s:
             return int(float(s.replace("k", "")) * 1_000)
-
         digits = ''.join(filter(str.isdigit, s))
         return int(digits) if digits else 0
     except Exception as e:
         return 0
 
+# Funktion för att extrahera belopp från text (t.ex. PDF)
 def extrahera_belopp(text, pattern):
     match = re.search(pattern, text, re.IGNORECASE)
     if match:
         return match.group(1)
     return "0"
 
-def extrahera_lista(text, pattern):
-    match = re.search(pattern, text, re.IGNORECASE)
-    if match:
-        return match.group(1)
-    return ""
-
+# Funktion för att extrahera försäkringsbolag från PDF
 def extrahera_forsakringsgivare(text):
     match = re.search(r"(if|lf|trygg-hansa|moderna|protector|svedea|folksam|gjensidige|dina|lanförsäkringar)", text, re.IGNORECASE)
     if match:
         return match.group(1).capitalize()
     return "Okänt"
 
+# Funktion för att extrahera villkor från PDF
 def extrahera_villkor_ur_pdf(text):
     return {
         "försäkringsgivare": extrahera_forsakringsgivare(text),
@@ -59,27 +51,39 @@ def extrahera_villkor_ur_pdf(text):
         "ansvar": extrahera_belopp(text, r"(ansvar|skadestånd).*?(\d+[\s]*[MmKkMmSEKsek,\.]*[\s]*SEK|kr)"),
         "avbrott": extrahera_belopp(text, r"(avbrott|förlust av intäkt|driftstopp).*?(\d+[\s]*[MmKkMmSEKsek,\.]*[\s]*SEK|kr)"),
         "självrisk": extrahera_belopp(text, r"(självrisk|självrisken).*?(\d+[\s]*[MmKkMmSEKsek,\.]*[\s]*SEK|kr)"),
-        "undantag": extrahera_lista(text, r"(undantag|exkluderat).*?:\s*(.*?)(\n|$)"),
+        "undantag": extrahera_belopp(text, r"(undantag|exkluderat).*?:\s*(.*?)(\n|$)"),
         "premie": extrahera_belopp(text, r"(premie|försäkringsbelopp).*?(\d+[\s]*[MmKkMmSEKsek,\.]*[\s]*SEK|kr)"),
         "villkorsreferens": "PDF"
     }
 
-def formattera_pdf_text(text):
-    text = re.sub(r"(?<=\w)\n(?=\w)", " ", text)  # Ta bort hårda radbrytningar mitt i meningar
-    stycken = re.split(r"\n{2,}|(?=\n[A-ZÄÖÅ])", text)  # Dela i stycken baserat på dubbla radbrytningar eller rubriker
-    highlight_nyckelord = [
-        (r"(?i)(självrisk)", "🟡 \\1"),
-        (r"(?i)(egendom)", "🟢 \\1"),
-        (r"(?i)(ansvar)", "🟣 \\1"),
-        (r"(?i)(avbrott)", "🔵 \\1"),
-        (r"(?i)(undantag)", "🔴 \\1"),
-        (r"(?i)(premie)", "🟠 \\1")
-    ]
-    formatterad = "\n\n".join([stycke.strip() for stycke in stycken if stycke.strip()])
-    for pattern, emoji in highlight_nyckelord:
-        formatterad = re.sub(pattern, emoji, formatterad)
-    return formatterad
+# Funktion för att läsa in PDF-text
+def läs_pdf_text(pdf_file):
+    reader = PdfReader(pdf_file)
+    text = ""
+    for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            text += page_text + "\n"
+    return text
 
+# Funktion för att skapa en Word-rapport från sammanställd data
+def generera_word_dokument(data):
+    doc = Document()
+    doc.add_heading("Upphandlingsunderlag – Försäkringsjämförelse", level=1)
+    table = doc.add_table(rows=1, cols=len(data[0]))
+    hdr_cells = table.rows[0].cells
+    for i, key in enumerate(data[0].keys()):
+        hdr_cells[i].text = key
+    for row in data:
+        cells = table.add_row().cells
+        for i, key in enumerate(row):
+            cells[i].text = str(row[key])
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+# Funktion för att jämföra och poängsätta villkor
 def poangsatt_villkor(lista):
     normaliserade = []
     for rad in lista:
@@ -108,38 +112,74 @@ def poangsatt_villkor(lista):
 
     return sorted(resultat, key=lambda x: x["Totalpoäng"], reverse=True)
 
-# === Visning i gränssnitt ===
+# === Streamlit gränssnitt ===
 
-if __name__ == "__main__":
-    st.set_page_config(page_title="PDF-analys", layout="centered")
-    st.title("📄 PDF-analys och villkorsutdrag")
+st.set_page_config(page_title="Försäkringsguide", page_icon="🛡️", layout="centered")
+st.title("🛡️ Försäkringsguide och Jämförelse")
 
-    uploaded_pdf = st.file_uploader("Ladda upp en PDF", type="pdf")
-    if uploaded_pdf:
-        reader = PdfReader(uploaded_pdf)
-        full_text = ""
-        for page in reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                full_text += page_text + "\n"
+menu = st.sidebar.radio("Navigera", ["🔍 Automatisk analys", "✍️ Manuell inmatning & rekommendation"])
 
-        st.subheader("🔎 Förhandsvisning av PDF-text")
-        st.text_area("📄 PDF-innehåll (formaterat)", value=formattera_pdf_text(full_text)[:3000], height=400)
+if menu == "🔍 Automatisk analys":
+    uploaded_pdfs = st.file_uploader("📄 Ladda upp en eller flera PDF:er", type="pdf", accept_multiple_files=True)
+    if uploaded_pdfs:
+        villkorslista = []
+        for i, pdf in enumerate(uploaded_pdfs):
+            text = läs_pdf_text(pdf)
+            st.markdown(f"#### 📄 Fil {i+1}: {pdf.name}")
+            st.text_area(f"Innehåll ur {pdf.name}", value=text[:2000], height=200)
 
-        st.subheader("📋 Extraherade värden")
-        resultat = extrahera_villkor_ur_pdf(full_text)
-        st.json(resultat)
+            extrakt = extrahera_villkor_ur_pdf(text)
+            villkorslista.append(extrakt)
 
-        st.subheader("📊 Jämförelse med poängsättning")
-        df = pd.DataFrame(poangsatt_villkor([resultat]))
-        st.dataframe(df.style.background_gradient(subset=["Totalpoäng"], cmap="RdYlGn"))
+            st.json(extrakt)
+            saknade = [k for k, v in extrakt.items() if to_number(v) == 0 and k != "undantag"]
+            if saknade:
+                st.warning(f"⚠️ Saknade fält i {pdf.name}: {', '.join(saknade)}")
+            st.markdown("---")
 
-        st.subheader("📉 Benchmarking")
-        st.markdown(f"**Snittpremie:** {df['Premie'].mean():,.0f} kr  |  **Snittsjälvrisk:** {df['Självrisk'].mean():,.0f} kr  |  **Snittpoäng:** {df['Totalpoäng'].mean():.2f}")
+        if villkorslista:
+            df = pd.DataFrame(poangsatt_villkor(villkorslista))
+            st.subheader("📊 Jämförelse med poängsättning")
+            st.dataframe(df)
 
-        st.download_button("⬇️ Ladda ner sammanställning (Word)", data=generera_word_dokument(df.to_dict(orient="records")), file_name="jamforelse_upphandling.docx")
+            st.download_button("⬇️ Ladda ner sammanställning (Word)", data=generera_word_dokument(df.to_dict(orient="records")), file_name="jamforelse_upphandling.docx")
+            st.success(f"✅ Jämförelse klar!")
 
-        st.success(f"🔔 Påminnelse noterat: spara detta datum ({date.today() + timedelta(days=300)}) i din kalender")
+elif menu == "✍️ Manuell inmatning & rekommendation":
+    with st.form("företagsformulär"):
+        företagsnamn = st.text_input("Företagsnamn")
+        omsättning = st.number_input("Omsättning (MSEK)", min_value=0.0, step=0.1)
+        anställda = st.number_input("Antal anställda", min_value=0, step=1)
+        bransch = st.selectbox("Bransch", ["IT", "Tillverkning", "Transport", "Konsult", "Handel", "Bygg", "Vård"])
+        ort = st.text_input("Stad")
+        land = st.text_input("Land", value="Sverige")
+        nuvarande_forsakring = st.text_input("Nuvarande försäkringsbolag (valfritt)")
+
+        egendom = st.number_input("Egendomsvärde (kr)", step=10000)
+        ansvar = st.number_input("Ansvarsskydd (kr)", step=10000)
+        avbrott = st.number_input("Avbrottsersättning (kr)", step=10000)
+        premie = st.number_input("Premie per år (kr)", step=10000)
         
-        st.markdown("---")
-        st.markdown("📤 Vill du skicka detta till en mäklare? Använd nedladdningsknappen ovan och bifoga i mail.")
+        submitted = st.form_submit_button("Analysera")
+
+    if submitted:
+        st.success(f"🎯 Analys för {företagsnamn} inom {bransch}!")
+        rekommendation = f"För {bransch} med {anställda} anställda och {omsättning} MSEK i omsättning rekommenderas: \n"
+
+        # Lägg till rekommendation baserat på bransch
+        if bransch == "IT":
+            rekommendation += "- Cyberförsäkring\n- Konsultansvar\n- Egendomsskydd"
+        
+        st.markdown(f"### 📌 Rekommenderat försäkringsupplägg\n{rekommendation}")
+        st.download_button("⬇️ Exportera rekommendation", data=generera_word_dokument([{
+            "Företag": företagsnamn,
+            "Org.nr": "Ej angivet",
+            "Bransch": bransch,
+            "Egendom": egendom,
+            "Ansvar": ansvar,
+            "Avbrott": avbrott,
+            "Premie": premie,
+            "Ort": ort,
+            "Land": land,
+            "Rekommendation": rekommendation
+        }]), file_name="forsakringsrekommendation.docx")
