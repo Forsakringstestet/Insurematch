@@ -17,7 +17,7 @@ def to_number(varde):
             return int(varde)
         s = str(varde).lower()
         s = s.replace(" ", "").replace("kr", "").replace("sek", "")
-        s = s.replace(",", ".")  # hantera t.ex. 1,5m som 1.5m
+        s = s.replace(",", ".")  # Hantera t.ex. 1,5m som 1.5m
 
         # Hantera miljoner och tusental (MSEK, m, k)
         if "msek" in s:
@@ -79,7 +79,6 @@ def formattera_pdf_text(text):
     return formatterad
 
 # === Visning i gränssnitt ===
-st.session_state.setdefault("extraherade_villkor", [])
 
 if __name__ == "__main__":
     st.set_page_config(page_title="PDF-analys", layout="centered")
@@ -93,79 +92,40 @@ if __name__ == "__main__":
             for page in reader.pages:
                 page_text = page.extract_text()
                 if page_text:
-                    full_text += page_text + "
-"
+                    full_text += page_text + "\n"  # Fixat strängfel
 
             st.subheader(f"🔎 PDF {i+1}: {uploaded_pdf.name}")
             st.text_area("📄 PDF-innehåll (formaterat)", value=formattera_pdf_text(full_text)[:3000], height=300)
 
-            extrakt = extrahera_villkor_ur_pdf(full_text)
-            st.session_state.extraherade_villkor.append(extrakt)
-            st.json(extrakt)
+            st.subheader("📋 Extraherade värden")
+            resultat = extrahera_villkor_ur_pdf(full_text)
+            st.json(resultat)
+
+            # Om villkoren inte kunde extraheras korrekt
+            saknade = [k for k, v in resultat.items() if to_number(v) == 0 and k != "undantag"]
+            if saknade:
+                st.warning(f"⚠️ Saknade fält i {uploaded_pdf.name}: {', '.join(saknade)}")
+
+# === Jämförelse och benchmarking ===
+
+    if uploaded_pdfs:
+        # Förbered data för poängsättning
+        villkorslista = []
+        for pdf in uploaded_pdfs:
+            text = läs_pdf_text(pdf)
+            extrakt = extrahera_villkor_ur_pdf(text)
+            villkorslista.append(extrakt)
 
         st.subheader("📊 Jämförelse med poängsättning")
-        df = pd.DataFrame(poangsatt_villkor(st.session_state.extraherade_villkor))
+        df = pd.DataFrame(poangsatt_villkor(villkorslista))
         st.dataframe(df.style.background_gradient(subset=["Totalpoäng"], cmap="RdYlGn"))
 
         st.subheader("📉 Benchmarking")
         st.markdown(f"**Snittpremie:** {df['Premie'].mean():,.0f} kr  |  **Snittsjälvrisk:** {df['Självrisk'].mean():,.0f} kr  |  **Snittpoäng:** {df['Totalpoäng'].mean():.2f}")
 
-        # Export till Word
-        from docx import Document
-        buffer = BytesIO()
-        doc = Document()
-        doc.add_heading("Jämförelse av försäkringsofferter", level=1)
-        table = doc.add_table(rows=1, cols=len(df.columns))
-        for i, col in enumerate(df.columns):
-            table.rows[0].cells[i].text = col
-        for _, row in df.iterrows():
-            cells = table.add_row().cells
-            for i, val in enumerate(row):
-                cells[i].text = str(val)
-        doc.save(buffer)
-        buffer.seek(0)
-        st.download_button("📥 Ladda ner jämförelse (Word)", data=buffer, file_name="jamforelse.docx")
+        # Ladda ner sammanställning (Word)
+        st.download_button("⬇️ Ladda ner sammanställning (Word)", data=generera_word_dokument(df.to_dict(orient="records")), file_name="jamforelse_upphandling.docx")
 
-        st.subheader("🔎 Förhandsvisning av PDF-text")
-        st.text_area("📄 PDF-innehåll (formaterat)", value=formattera_pdf_text(full_text)[:3000], height=400)
-
-        st.subheader("📋 Extraherade värden")
-        resultat = extrahera_villkor_ur_pdf(full_text)
-        st.json(resultat)
-
-def poangsatt_villkor(lista):
-    normaliserade = []
-    for rad in lista:
-        normaliserade.append({
-            "Bolag": rad.get("försäkringsgivare", "Okänt"),
-            "Egendom": to_number(rad.get("egendom")),
-            "Ansvar": to_number(rad.get("ansvar")),
-            "Avbrott": to_number(rad.get("avbrott")),
-            "Självrisk": to_number(rad.get("självrisk")),
-            "Premie": to_number(rad.get("premie")),
-            "Undantag": rad.get("undantag", "")
-        })
-
-    max_täckning = max((f["Egendom"] + f["Ansvar"]) for f in normaliserade) or 1
-    max_självrisk = max((f["Självrisk"] for f in normaliserade)) or 1
-    max_premie = max((f["Premie"] for f in normaliserade)) or 1
-
-    resultat = []
-    for f in normaliserade:
-        poäng_täckning = (f["Egendom"] + f["Ansvar"]) / max_täckning
-        poäng_självrisk = 1 - (f["Självrisk"] / max_självrisk)
-        poäng_premie = 1 - (f["Premie"] / max_premie)
-        totalpoäng = round(0.5 * poäng_täckning + 0.2 * poäng_självrisk + 0.3 * poäng_premie, 3)
-        f["Totalpoäng"] = totalpoäng
-        resultat.append(f)
-
-    return sorted(resultat, key=lambda x: x["Totalpoäng"], reverse=True)
-
-        st.subheader("📊 Jämförelse med poängsättning")
-        df = pd.DataFrame(poangsatt_villkor([resultat]))
-        st.dataframe(df.style.background_gradient(subset=["Totalpoäng"], cmap="RdYlGn"))
-
-        st.subheader("📉 Benchmarking")
-        st.markdown(f"**Snittpremie:** {df['Premie'].mean():,.0f} kr  |  **Snittsjälvrisk:** {df['Självrisk'].mean():,.0f} kr  |  **Snittpoäng:** {df['Totalpoäng'].mean():.2f}")
-
-# resten av koden oförändrad...
+        # Påminnelse
+        påminnelse_datum = st.date_input("🔔 Vill du få en påminnelse innan förnyelse?", value=date.today() + timedelta(days=300), key="reminder_date")
+        st.success(f"🔔 Påminnelse noterat: spara detta datum ({påminnelse_datum}) i din kalender")
