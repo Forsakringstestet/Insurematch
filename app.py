@@ -8,6 +8,8 @@ from datetime import date, timedelta
 
 # === Utils ===
 
+BASBELOPP_2025 = 58800
+
 def to_number(varde):
     try:
         if varde is None:
@@ -16,7 +18,10 @@ def to_number(varde):
             return int(varde)
         s = str(varde).lower()
         s = s.replace(" ", "").replace("kr", "").replace("sek", "").replace(",", ".")
-        if "msek" in s:
+        if "basbelopp" in s:
+            val = float(re.findall(r"(\d+\.?\d*)", s)[0])
+            return int(val * BASBELOPP_2025)
+        elif "msek" in s:
             return int(float(s.replace("msek", "")) * 1_000_000)
         elif "m" in s:
             return int(float(s.replace("m", "")) * 1_000_000)
@@ -28,13 +33,11 @@ def to_number(varde):
         st.warning(f"⚠️ Fel vid konvertering till nummer: {varde} ({type(varde).__name__}) → {e}")
         return 0
 
-def extrahera_belopp(text, pattern):
-    match = re.search(pattern, text, re.IGNORECASE)
-    if match:
-        belopp = match.group(2)
-        if belopp:
-            return belopp.strip()
-    return "0"
+def extrahera_belopp_flex(text, keyword):
+    pattern = rf"{keyword}[^0-9]*([\d\s.,]+(?:kr|sek|k|m|basbelopp)?)"
+    matches = re.findall(pattern, text, re.IGNORECASE)
+    numbers = [to_number(m) for m in matches]
+    return max(numbers) if numbers else 0
 
 def extrahera_lista(text, pattern):
     match = re.search(pattern, text, re.IGNORECASE)
@@ -44,19 +47,17 @@ def extrahera_lista(text, pattern):
 
 def extrahera_forsakringsgivare(text):
     match = re.search(r"(if|lf|trygg-hansa|moderna|protector|svedea|folksam|gjensidige|dina|lanförsäkringar)", text, re.IGNORECASE)
-    if match:
-        return match.group(1).capitalize()
-    return "Okänt"
+    return match.group(1).capitalize() if match else "Okänt"
 
 def extrahera_villkor_ur_pdf(text):
     return {
         "försäkringsgivare": extrahera_forsakringsgivare(text),
-        "egendom": extrahera_belopp(text, r"(egendom|byggnad|fastighet).*?(\d[\d\s\.,]*\s*(kr|sek|m|k)?)"),
-        "ansvar": extrahera_belopp(text, r"(ansvar|skadestånd).*?(\d[\d\s\.,]*\s*(kr|sek|m|k)?)"),
-        "avbrott": extrahera_belopp(text, r"(avbrott|förlust av intäkt|driftstopp).*?(\d[\d\s\.,]*\s*(kr|sek|m|k)?)"),
-        "självrisk": extrahera_belopp(text, r"(självrisk).*?(\d[\d\s\.,]*\s*(kr|sek|m|k)?)"),
+        "egendom": extrahera_belopp_flex(text, "maskiner|inventarier|byggnad|fastighet|egendom"),
+        "ansvar": extrahera_belopp_flex(text, "ansvar|ansvarsförsäkring|produktansvar"),
+        "avbrott": extrahera_belopp_flex(text, "avbrott|förlust av täckningsbidrag|omsättning"),
+        "självrisk": extrahera_belopp_flex(text, "självrisk"),
         "undantag": extrahera_lista(text, r"(undantag|exkluderat).*?:\s*(.*?)(\n|$)"),
-        "premie": extrahera_belopp(text, r"(premie|försäkringsbelopp).*?(\d[\d\s\.,]*\s*(kr|sek|m|k)?)"),
+        "premie": extrahera_belopp_flex(text, "premie|pris totalt|försäkringsbelopp"),
         "villkorsreferens": "PDF"
     }
 
@@ -64,19 +65,19 @@ def läs_pdf_text(pdf_file):
     reader = PdfReader(pdf_file)
     text = ""
     for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-            text += page_text + "\n"
+        content = page.extract_text()
+        if content:
+            text += content + "\n"
     return text
 
 def poangsatt_villkor(villkor_list):
     df = pd.DataFrame(villkor_list)
 
-    df["Premie"] = df["premie"].apply(to_number)
-    df["Självrisk"] = df["självrisk"].apply(to_number)
-    df["Egendom"] = df["egendom"].apply(to_number)
-    df["Ansvar"] = df["ansvar"].apply(to_number)
-    df["Avbrott"] = df["avbrott"].apply(to_number)
+    df["Premie"] = df["premie"]
+    df["Självrisk"] = df["självrisk"]
+    df["Egendom"] = df["egendom"]
+    df["Ansvar"] = df["ansvar"]
+    df["Avbrott"] = df["avbrott"]
 
     df["Premie_poäng"] = 1 / (df["Premie"] + 1)
     df["Självrisk_poäng"] = 1 / (df["Självrisk"] + 1)
