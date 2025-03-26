@@ -114,12 +114,12 @@ menu = st.sidebar.radio("Navigera", ["🔍 Automatisk analys", "✍️ Manuell i
 
 if menu == "🔍 Automatisk analys":
     uploaded_pdfs = st.file_uploader(
-    key="upload_pdfs","📄 Ladda upp en eller flera PDF:er", type="pdf", accept_multiple_files=True)
+    "📄 Ladda upp en eller flera PDF:er", key="upload_pdfs", type="pdf", accept_multiple_files=True)
     påminnelse_datum = st.date_input(
-        key="reminder_date","🔔 Vill du få en påminnelse innan förnyelse?", value=date.today() + timedelta(days=300))
+    "🔔 Vill du få en påminnelse innan förnyelse?", value=date.today() + timedelta(days=300), key="reminder_date")
 
     if uploaded_pdfs:
-    if 'historik' not in st.session_state:
+        if 'historik' not in st.session_state:
         st.session_state.historik = []
 
     villkorslista = []
