@@ -81,51 +81,102 @@ def formattera_pdf_text(text):
 # === Visning i gränssnitt ===
 
 if __name__ == "__main__":
-    st.set_page_config(page_title="PDF-analys", layout="centered")
-    st.title("📄 PDF-analys och villkorsutdrag")
+    st.set_page_config(page_title="Försäkringsguide", layout="centered")
+    st.title("🛡️ Försäkringsguide och Jämförelse")
 
-    uploaded_pdfs = st.file_uploader("Ladda upp en eller flera PDF:er", type="pdf", accept_multiple_files=True)
-    if uploaded_pdfs:
-        for i, uploaded_pdf in enumerate(uploaded_pdfs):
-            reader = PdfReader(uploaded_pdf)
-            full_text = ""
-            for page in reader.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    full_text += page_text + "\n"  # Fixat strängfel
+    menu = st.sidebar.radio("Navigera", ["🔍 Automatisk analys", "✍️ Manuell inmatning & rekommendation"])
 
-            st.subheader(f"🔎 PDF {i+1}: {uploaded_pdf.name}")
-            st.text_area("📄 PDF-innehåll (formaterat)", value=formattera_pdf_text(full_text)[:3000], height=300)
-
-            st.subheader("📋 Extraherade värden")
-            resultat = extrahera_villkor_ur_pdf(full_text)
-            st.json(resultat)
-
-            # Om villkoren inte kunde extraheras korrekt
-            saknade = [k for k, v in resultat.items() if to_number(v) == 0 and k != "undantag"]
-            if saknade:
-                st.warning(f"⚠️ Saknade fält i {uploaded_pdf.name}: {', '.join(saknade)}")
-
-# === Jämförelse och benchmarking ===
-
-    if uploaded_pdfs:
-        # Förbered data för poängsättning
-        villkorslista = []
-        for pdf in uploaded_pdfs:
-            text = läs_pdf_text(pdf)
-            extrakt = extrahera_villkor_ur_pdf(text)
-            villkorslista.append(extrakt)
-
-        st.subheader("📊 Jämförelse med poängsättning")
-        df = pd.DataFrame(poangsatt_villkor(villkorslista))
-        st.dataframe(df.style.background_gradient(subset=["Totalpoäng"], cmap="RdYlGn"))
-
-        st.subheader("📉 Benchmarking")
-        st.markdown(f"**Snittpremie:** {df['Premie'].mean():,.0f} kr  |  **Snittsjälvrisk:** {df['Självrisk'].mean():,.0f} kr  |  **Snittpoäng:** {df['Totalpoäng'].mean():.2f}")
-
-        # Ladda ner sammanställning (Word)
-        st.download_button("⬇️ Ladda ner sammanställning (Word)", data=generera_word_dokument(df.to_dict(orient="records")), file_name="jamforelse_upphandling.docx")
-
-        # Påminnelse
+    if menu == "🔍 Automatisk analys":
+        uploaded_pdfs = st.file_uploader("📄 Ladda upp en eller flera PDF:er", type="pdf", accept_multiple_files=True)
         påminnelse_datum = st.date_input("🔔 Vill du få en påminnelse innan förnyelse?", value=date.today() + timedelta(days=300), key="reminder_date")
-        st.success(f"🔔 Påminnelse noterat: spara detta datum ({påminnelse_datum}) i din kalender")
+
+        if uploaded_pdfs:
+            villkorslista = []
+            for i, uploaded_pdf in enumerate(uploaded_pdfs):
+                reader = PdfReader(uploaded_pdf)
+                full_text = ""
+                for page in reader.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        full_text += page_text + "\n"
+
+                st.subheader(f"🔎 PDF {i+1}: {uploaded_pdf.name}")
+                st.text_area("📄 PDF-innehåll (formaterat)", value=formattera_pdf_text(full_text)[:3000], height=300)
+
+                st.subheader("📋 Extraherade värden")
+                resultat = extrahera_villkor_ur_pdf(full_text)
+                st.json(resultat)
+
+                villkorslista.append(resultat)
+
+            # Jämförelse med poängsättning
+            if villkorslista:
+                df = pd.DataFrame(poangsatt_villkor(villkorslista))
+                st.dataframe(df.style.background_gradient(subset=["Totalpoäng"], cmap="RdYlGn"))
+
+                st.subheader("📉 Benchmarking")
+                st.markdown(f"**Snittpremie:** {df['Premie'].mean():,.0f} kr  |  **Snittsjälvrisk:** {df['Självrisk'].mean():,.0f} kr  |  **Snittpoäng:** {df['Totalpoäng'].mean():.2f}")
+
+                st.download_button("⬇️ Ladda ner sammanställning (Word)", data=generera_word_dokument(df.to_dict(orient="records")), file_name="jamforelse_upphandling.docx")
+
+                st.success(f"🔔 Påminnelse noterat: spara detta datum ({påminnelse_datum}) i din kalender")
+
+        else:
+            st.markdown("*Inga sparade ännu.*")
+
+    elif menu == "✍️ Manuell inmatning & rekommendation":
+        with st.form("företagsformulär"):
+            st.subheader("🏢 Företagsinformation")
+            företagsnamn = st.text_input("Företagsnamn")
+            orgnr = st.text_input("Organisationsnummer")
+            omsättning = st.number_input("Omsättning (MSEK)", min_value=0.0, step=0.1)
+            anställda = st.number_input("Antal anställda", min_value=0, step=1)
+            bransch = st.selectbox("Bransch", ["IT", "Tillverkning", "Transport", "Konsult", "Handel", "Bygg", "Vård"])
+            ort = st.text_input("Stad")
+            land = st.text_input("Land", value="Sverige")
+            nuvarande = st.text_input("Nuvarande försäkringsbolag (valfritt)")
+
+            st.subheader("🛡️ Försäkringsmoment")
+            egendom = st.number_input("Egendomsvärde (kr)", step=10000)
+            ansvar = st.number_input("Ansvarsskydd (kr)", step=10000)
+            avbrott = st.number_input("Avbrottsersättning (kr)", step=10000)
+            premie = st.number_input("Premie per år (kr)", step=10000)
+            submitted = st.form_submit_button("Analysera")
+
+        if submitted:
+            st.success(f"🎯 Tack {företagsnamn}, analys för bransch: {bransch}")
+            rekommendation = f"🔎 För ett företag inom {bransch.lower()} med {anställda} anställda och {omsättning} MSEK i omsättning rekommenderas vanligtvis följande försäkringsmoment:\n"
+
+            # Lägg till specifika rekommendationer baserat på bransch
+            if bransch == "IT":
+                rekommendation += "- Cyberförsäkring (5–15% av omsättningen)\n- Konsultansvar (2–10 MSEK)\n- Egendomsskydd för IT-utrustning"
+            elif bransch == "Tillverkning":
+                rekommendation += "- Egendomsförsäkring för maskiner/lager\n- Produktansvar (minst 10 MSEK)\n- Avbrottsförsäkring (upp till 12 månaders täckning)"
+            elif bransch == "Transport":
+                rekommendation += "- Transportöransvar & varuförsäkring\n- Trafik/vagnskada på fordon\n- Avbrott & ansvar utanför CMR"
+            elif bransch == "Konsult":
+                rekommendation += "- Konsultansvar (minst 2–5 MSEK)\n- Rättsskydd\n- Cyber om kunddata hanteras"
+            elif bransch == "Handel":
+                rekommendation += "- Lager/inventarieförsäkring\n- Produktansvar (säljled)\n- Avbrott & transport"
+            elif bransch == "Bygg":
+                rekommendation += "- Entreprenad/allrisk\n- ROT-ansvar\n- Egendom/maskiner + ansvarsförsäkring"
+            elif bransch == "Vård":
+                rekommendation += "- Patientförsäkring (lagkrav)\n- Avbrott & egendom\n- Ansvar utöver patientskadelagen"
+
+            st.markdown(f"""
+            #### 📌 Rekommenderat försäkringsupplägg
+            {rekommendation}
+            """)
+
+            st.download_button("⬇️ Exportera förslag (Word)", data=generera_word_dokument([{
+                "Företag": företagsnamn,
+                "Org.nr": orgnr,
+                "Bransch": bransch,
+                "Egendom": egendom,
+                "Ansvar": ansvar,
+                "Avbrott": avbrott,
+                "Premie": premie,
+                "Ort": ort,
+                "Land": land,
+                "Rekommendation": rekommendation
+            }]), file_name="forsakringsrekommendation.docx")
