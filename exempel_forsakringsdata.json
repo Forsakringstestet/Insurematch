@@ -1,0 +1,32 @@
+[
+    {
+        "f\u00f6rs\u00e4kringsgivare": "TryggHansa",
+        "egendom": "10 MSEK",
+        "ansvar": "20 MSEK",
+        "avbrott": "50 MSEK",
+        "sj\u00e4lvrisk": "50k",
+        "undantag": "Cyber, Krig",
+        "premie": "240000 kr",
+        "villkorsreferens": "PDF123"
+    },
+    {
+        "f\u00f6rs\u00e4kringsgivare": "IF",
+        "egendom": "8 000 000 kr",
+        "ansvar": "25 000 000 kr",
+        "avbrott": "45 000 000",
+        "sj\u00e4lvrisk": "40 000 SEK",
+        "undantag": "Cyber",
+        "premie": "230000",
+        "villkorsreferens": "LINK456"
+    },
+    {
+        "f\u00f6rs\u00e4kringsgivare": "L\u00e4nsf\u00f6rs\u00e4kringar",
+        "egendom": "9 MSEK",
+        "ansvar": "22 MSEK",
+        "avbrott": "48 MSEK",
+        "sj\u00e4lvrisk": "60k",
+        "undantag": "Cyber, Strejk",
+        "premie": "225000 kr",
+        "villkorsreferens": "DOC789"
+    }
+]
