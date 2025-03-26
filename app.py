@@ -22,8 +22,8 @@ def to_number(varde):
             return int(float(s.replace("m", "")) * 1_000_000)
         elif "k" in s:
             return int(float(s.replace("k", "")) * 1_000)
-        digits = ''.join(filter(str.isdigit, s))
-        return int(digits) if digits else 0
+        digits = ''.join(filter(lambda x: x.isdigit() or x == '.', s))
+        return int(float(digits)) if digits else 0
     except Exception as e:
         st.warning(f"⚠️ Fel vid konvertering till nummer: {varde} ({type(varde).__name__}) → {e}")
         return 0
@@ -31,13 +31,15 @@ def to_number(varde):
 def extrahera_belopp(text, pattern):
     match = re.search(pattern, text, re.IGNORECASE)
     if match:
-        return match.group(1)
+        belopp = match.group(2)
+        if belopp:
+            return belopp.strip()
     return "0"
 
 def extrahera_lista(text, pattern):
     match = re.search(pattern, text, re.IGNORECASE)
     if match:
-        return match.group(1)
+        return match.group(1).strip()
     return ""
 
 def extrahera_forsakringsgivare(text):
@@ -49,12 +51,12 @@ def extrahera_forsakringsgivare(text):
 def extrahera_villkor_ur_pdf(text):
     return {
         "försäkringsgivare": extrahera_forsakringsgivare(text),
-        "egendom": extrahera_belopp(text, r"(egendom|byggnad|fastighet).*?(\d+[\s]*[MmKkMmSEKsek,\.]*[\s]*SEK|kr)"),
-        "ansvar": extrahera_belopp(text, r"(ansvar|skadestånd).*?(\d+[\s]*[MmKkMmSEKsek,\.]*[\s]*SEK|kr)"),
-        "avbrott": extrahera_belopp(text, r"(avbrott|förlust av intäkt|driftstopp).*?(\d+[\s]*[MmKkMmSEKsek,\.]*[\s]*SEK|kr)"),
-        "självrisk": extrahera_belopp(text, r"(självrisk|självrisken).*?(\d+[\s]*[MmKkMmSEKsek,\.]*[\s]*SEK|kr)"),
+        "egendom": extrahera_belopp(text, r"(egendom|byggnad|fastighet).*?(\d[\d\s\.,]*\s*(kr|sek|m|k)?)"),
+        "ansvar": extrahera_belopp(text, r"(ansvar|skadestånd).*?(\d[\d\s\.,]*\s*(kr|sek|m|k)?)"),
+        "avbrott": extrahera_belopp(text, r"(avbrott|förlust av intäkt|driftstopp).*?(\d[\d\s\.,]*\s*(kr|sek|m|k)?)"),
+        "självrisk": extrahera_belopp(text, r"(självrisk).*?(\d[\d\s\.,]*\s*(kr|sek|m|k)?)"),
         "undantag": extrahera_lista(text, r"(undantag|exkluderat).*?:\s*(.*?)(\n|$)"),
-        "premie": extrahera_belopp(text, r"(premie|försäkringsbelopp).*?(\d+[\s]*[MmKkMmSEKsek,\.]*[\s]*SEK|kr)"),
+        "premie": extrahera_belopp(text, r"(premie|försäkringsbelopp).*?(\d[\d\s\.,]*\s*(kr|sek|m|k)?)"),
         "villkorsreferens": "PDF"
     }
 
@@ -106,13 +108,13 @@ def poangsatt_villkor(villkor_list):
 
 def färgschema(value):
     if value >= 8:
-        return 'background-color: #b6fcb6'  # 🟢
+        return 'background-color: #b6fcb6'
     elif value >= 6:
-        return 'background-color: #f9fcb6'  # 🟡
+        return 'background-color: #f9fcb6'
     elif value >= 4:
-        return 'background-color: #fde2b6'  # 🟠
+        return 'background-color: #fde2b6'
     else:
-        return 'background-color: #fcb6b6'  # 🔴
+        return 'background-color: #fcb6b6'
 
 def generera_word_dokument(data):
     doc = Document()
