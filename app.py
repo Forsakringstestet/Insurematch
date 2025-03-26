@@ -66,7 +66,7 @@ def extrahera_villkor_ur_pdf(text):
         "avbrott": extrahera_belopp_flex(text, "avbrott|förlust av täckningsbidrag|omsättning"),
         "självrisk": extrahera_belopp_flex(text, "självrisk"),
         "undantag": extrahera_lista(text, r"(undantag|exkluderat).*?:\s*(.*?)(\n|$)"),
-        "premie": extrahera_belopp_flex(text, "premie|pris totalt|försäkringsbelopp"),
+        "premie": extrahera_belopp_flex(text, r"premie|bruttopremie|nettopremie|kostnad|pris|attbetala|totalpremie|summa"),
         "villkorsreferens": "PDF"
     }
 
