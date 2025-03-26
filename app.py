@@ -1,8 +1,10 @@
 import streamlit as st
 import pandas as pd
 import json
+import re
 from io import BytesIO
 from docx import Document
+from PyPDF2 import PdfReader
 
 # --- FUNKTIONER ---
 def to_number(varde):
@@ -13,14 +15,14 @@ def to_number(varde):
 
 def normalisera_data(radata):
     return {
-        "bolag": radata.get("försäkringsgivare"),
+        "bolag": radata.get("försäkringsgivare", "Okänt"),
         "egendom": to_number(radata.get("egendom", 0)),
         "ansvar": to_number(radata.get("ansvar", 0)),
         "avbrott": to_number(radata.get("avbrott", 0)),
         "självrisk": to_number(radata.get("självrisk", 0)),
         "undantag": [u.strip().lower() for u in radata.get("undantag", "").split(",")],
         "premie": to_number(radata.get("premie", 0)),
-        "villkor_id": radata.get("villkorsreferens")
+        "villkor_id": radata.get("villkorsreferens", "PDF")
     }
 
 def jämför_försäkringar(försäkringar):
@@ -63,7 +65,7 @@ def generera_word_dokument(data):
     doc = Document()
     doc.add_heading('Upphandlingsunderlag – Försäkringsjämförelse', level=1)
     doc.add_paragraph('Detta dokument genererades automatiskt via Streamlit-appen. Nedan följer en sammanställning av rankade försäkringsförslag.')
-    
+
     table = doc.add_table(rows=1, cols=len(data[0]))
     table.style = 'Table Grid'
     hdr_cells = table.rows[0].cells
@@ -80,19 +82,51 @@ def generera_word_dokument(data):
     buffer.seek(0)
     return buffer
 
+def läs_pdf_text(pdf_file):
+    pdf_reader = PdfReader(pdf_file)
+    text = ""
+    for page in pdf_reader.pages:
+        text += page.extract_text() + "\n"
+    return text
+
+def extrahera_villkor_ur_pdf(text):
+    return {
+        "försäkringsgivare": "Okänt",
+        "egendom": extrahera_belopp(text, r"egendom.*?(\d+[\s]*[MmKk]?SEK|kr)"),
+        "ansvar": extrahera_belopp(text, r"ansvar.*?(\d+[\s]*[MmKk]?SEK|kr)"),
+        "avbrott": extrahera_belopp(text, r"avbrott.*?(\d+[\s]*[MmKk]?SEK|kr)"),
+        "självrisk": extrahera_belopp(text, r"självrisk.*?(\d+[\s]*[MmKk]?SEK|kr)"),
+        "undantag": extrahera_lista(text, r"undantag.*?:\s*(.*)\n"),
+        "premie": extrahera_belopp(text, r"premie.*?(\d+[\s]*[MmKk]?SEK|kr)"),
+        "villkorsreferens": "PDF"
+    }
+
+def extrahera_belopp(text, pattern):
+    match = re.search(pattern, text, re.IGNORECASE)
+    return match.group(1) if match else "0"
+
+def extrahera_lista(text, pattern):
+    match = re.search(pattern, text, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return ""
+
 # --- GRENSSNITT ---
-st.set_page_config(page_title="Försäkringsjämförelse", page_icon="📊", layout="centered")
-st.title("📊 Försäkringsjämförelse – Upphandling")
+st.set_page_config(page_title="Försäkringsjämförelse", page_icon="🛡️", layout="centered")
+st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/8/80/Insurance_icon.svg/1200px-Insurance_icon.svg.png", width=80)
+st.title("🛡️ Försäkringsjämförelse – Upphandling")
 
 st.markdown("""
 ### 📘 Så fungerar det:
-1. Ladda upp en JSON-fil från Insurematch (eller klicka för att visa testdata)
-2. Vi jämför försäkringar baserat på täckning, självrisk och premie
-3. Du får en rangordnad lista och kan exportera till CSV eller Word
+1. Ladda upp en JSON-fil från Insurematch eller klicka på testdata
+2. Alternativt – analysera dina PDF-villkor eller försäkringsbrev
+3. Vi jämför villkoren och visar rankat resultat
 """)
 
-# Exempeldata-knapp
-if st.button("Visa testdata utan att ladda upp"):
+# --- JSON-delen ---
+data = []
+
+if st.button("📊 Visa testdata"):
     exempeldata = [
         {"försäkringsgivare": "TryggHansa", "egendom": "10 MSEK", "ansvar": "20 MSEK", "avbrott": "50 MSEK", "självrisk": "50k", "undantag": "Cyber, Krig", "premie": "240000 kr", "villkorsreferens": "PDF123"},
         {"försäkringsgivare": "IF", "egendom": "8 000 000 kr", "ansvar": "25 000 000 kr", "avbrott": "45 000 000", "självrisk": "40 000 SEK", "undantag": "Cyber", "premie": "230000", "villkorsreferens": "LINK456"},
@@ -100,16 +134,26 @@ if st.button("Visa testdata utan att ladda upp"):
     ]
     data = exempeldata
 else:
-    uploaded_file = st.file_uploader("📁 Ladda upp JSON-fil med försäkringsdata", type=["json"])
-    if uploaded_file is not None:
+    uploaded_json = st.file_uploader("📁 Ladda upp JSON-fil", type=["json"])
+    if uploaded_json:
         try:
-            data = json.load(uploaded_file)
+            data = json.load(uploaded_json)
         except Exception as e:
-            st.error(f"Fel vid uppladdning: {e}")
-            data = None
-    else:
-        data = None
+            st.error(f"Fel i JSON: {e}")
 
+# --- PDF-delen ---
+with st.expander("📄 Ladda upp PDF för analys (villkor eller försäkringsbrev)"):
+    uploaded_pdf = st.file_uploader("📄 Ladda upp PDF", type="pdf")
+    if uploaded_pdf:
+        pdf_text = läs_pdf_text(uploaded_pdf)
+        st.subheader("📃 Utdrag ur PDF:")
+        st.text_area("PDF-innehåll", value=pdf_text[:3000], height=300)
+        villkor = extrahera_villkor_ur_pdf(pdf_text)
+        st.markdown("**📌 Automatisk extraktion:**")
+        st.json(villkor)
+        data.append(villkor)
+
+# --- Jämförelse & export ---
 if data:
     normaliserade = [normalisera_data(f) for f in data]
     rankade = jämför_försäkringar(normaliserade)
@@ -122,4 +166,4 @@ if data:
     word_buffer = generera_word_dokument(rankade)
     st.download_button("⬇️ Ladda ner upphandlingsunderlag (Word)", data=word_buffer, file_name="upphandlingsunderlag.docx")
 else:
-    st.info("Vänligen ladda upp en JSON-fil eller klicka på testdata-knappen.")
+    st.info("Ladda upp JSON eller testa PDF-läsning för analys.")
