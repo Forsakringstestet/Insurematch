@@ -56,7 +56,74 @@ def extrahera_premie(text):
             except ValueError:
                 continue
     return 0
-    
+def extrahera_självrisk(text):
+    basbelopp = 58800  # 2025 års PBB
+    # Matcha t.ex. "Självrisk: 0,2 basbelopp", "Självrisk: 10000 kr"
+    patterns = [
+        r"självrisk[^0-9a-zA-Z]{0,10}([\d\s]+)[\s]*(kr|sek|kronor)?",
+        r"självrisk[^0-9a-zA-Z]{0,10}([\d.,]+)[\s]*(basbelopp|bb)"
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            val = match.group(1).replace(",", ".").replace(" ", "")
+            try:
+                if "basbelopp" in match.group(0).lower() or "bb" in match.group(0).lower():
+                    return int(float(val) * basbelopp)
+                return int(float(val))
+            except ValueError:
+                continue
+    return 0
+def extrahera_egendom(text):
+    poster = {
+        "byggnad": 0,
+        "maskiner": 0,
+        "varor": 0
+    }
+
+    # Definiera mönster för varje delpost
+    mönster = {
+        "byggnad": r"(byggnad|verkstadsbyggnad)[^\d]{0,10}([\d\s]+)[\s]*(kr|sek|kronor)?",
+        "maskiner": r"(maskiner|inventarier)[^\d]{0,10}([\d\s]+)[\s]*(kr|sek|kronor)?",
+        "varor": r"(varor|lager)[^\d]{0,10}([\d\s]+)[\s]*(kr|sek|kronor)?"
+    }
+
+    for nyckel, pattern in mönster.items():
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            val = match.group(2).replace(" ", "").replace(",", "").replace(".", "")
+            try:
+                poster[nyckel] = int(val)
+            except ValueError:
+                poster[nyckel] = 0
+
+    total_egendom = sum(poster.values())
+    return total_egendom, poster  # Returnera total + delposter (om vi vill visa dem i framtiden)
+def extrahera_ansvar(text):
+    poster = {
+        "allmänt": 0,
+        "produkt": 0,
+        "verksamhet": 0
+    }
+
+    mönster = {
+        "allmänt": r"(allmänt ansvar|ansvarsförsäkring)[^\d]{0,10}([\d\s]+)",
+        "produkt": r"(produktansvar)[^\d]{0,10}([\d\s]+)",
+        "verksamhet": r"(verksamhetsansvar)[^\d]{0,10}([\d\s]+)"
+    }
+
+    for nyckel, pattern in mönster.items():
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            val = match.group(2).replace(" ", "").replace(",", "").replace(".", "")
+            try:
+                poster[nyckel] = int(val)
+            except ValueError:
+                poster[nyckel] = 0
+
+    total_ansvar = sum(poster.values())
+    return total_ansvar, poster
+
 def extrahera_forsakringsgivare(text):
     match = re.search(r"(if|lf|trygg-hansa|moderna|protector|svedea|folksam|gjensidige|dina|lanförsäkringar)", text, re.IGNORECASE)
     return match.group(1).capitalize() if match else "Okänt"
