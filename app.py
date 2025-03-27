@@ -52,7 +52,11 @@ def extrahera_premie(text):
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            return int(match.group(1).replace(" ", ""))
+            try:
+                value = match.group(1).replace(" ", "")
+                return int(value)
+            except:
+                continue
     return 0
 
 def extrahera_forsakringsgivare(text):
