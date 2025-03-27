@@ -1,6 +1,5 @@
-streamlit
-pandas
-python-docx
-PyPDF2
-matplotlib
-seaborn
+streamlit>=1.31.0
+pandas>=2.1.0
+python-docx>=0.8.11
+PyPDF2>=3.0.1
+pdfplumber>=0.10.2
