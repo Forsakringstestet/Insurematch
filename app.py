@@ -6,10 +6,8 @@ from docx import Document
 from PyPDF2 import PdfReader
 from datetime import date, timedelta
 
-# === KONSTANTER ===
 BASBELOPP_2025 = 58800
 
-# === UTILS ===
 def to_number(varde):
     try:
         if varde is None:
@@ -29,8 +27,7 @@ def to_number(varde):
             return int(float(s.replace("k", "")) * 1_000)
         digits = ''.join(filter(lambda x: x.isdigit() or x == '.', s))
         return int(float(digits)) if digits else 0
-    except Exception as e:
-        st.warning(f"⚠️ Fel vid konvertering till nummer: {varde} ({type(varde).__name__}) → {e}")
+    except Exception:
         return 0
 
 def extrahera_belopp_flex(text, keyword):
@@ -39,15 +36,15 @@ def extrahera_belopp_flex(text, keyword):
     numbers = [to_number(m) for m in matches]
     return max(numbers) if numbers else 0
 
+def extrahera_forsakringsgivare(text):
+    match = re.search(r"(if|lf|trygg-hansa|moderna|protector|svedea|folksam|gjensidige|dina|lanförsäkringar)", text, re.IGNORECASE)
+    return match.group(1).capitalize() if match else "Okänt"
+
 def extrahera_lista(text, pattern):
     match = re.search(pattern, text, re.IGNORECASE)
     if match:
         return match.group(1).strip()
     return ""
-
-def extrahera_forsakringsgivare(text):
-    match = re.search(r"(if|lf|trygg-hansa|moderna|protector|svedea|folksam|gjensidige|dina|lanförsäkringar)", text, re.IGNORECASE)
-    return match.group(1).capitalize() if match else "Okänt"
 
 def läs_pdf_text(pdf_file):
     reader = PdfReader(pdf_file)
@@ -57,24 +54,24 @@ def läs_pdf_text(pdf_file):
         if content:
             text += content + "\n"
     return text
-# === SMART PREMIEPARSER ===
+
 def extrahera_premie(text):
-    premie_regex = re.compile(
-        r'(bruttopremie|nettopremie|pris per år|totalkostnad|försäkringskostnad|premie|att betala|totalpremie|pris)\D{0,10}([\d\s.,]+(?:kr|:-)?)',
-        flags=re.IGNORECASE
-    )
-    matches = premie_regex.findall(text)
-    for _, raw in matches:
-        raw = raw.replace("kr", "").replace(":-", "").replace(" ", "").replace(".", "")
-        try:
-            return int(float(raw))
-        except:
-            continue
+    patterns = [
+        r"bruttopremie[:\s]*([\d\s]+) ?kr",
+        r"nettopremie[:\s]*([\d\s]+) ?kr",
+        r"pris per år[:\s]*([\d\s]+) ?kr",
+        r"premie[:\s]*([\d\s]+) ?kr",
+        r"total kostnad[:\s]*([\d\s]+) ?kr",
+        r"pris[:\s]*([\d\s]+) ?kr"
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return int(match.group(1).replace(" ", ""))
     return 0
 
-# === EXTRAHERA VILLKOR ===
 def extrahera_villkor_ur_pdf(text):
-    villkor = {
+    return {
         "försäkringsgivare": extrahera_forsakringsgivare(text),
         "egendom": extrahera_belopp_flex(text, "maskiner|inventarier|byggnad|fastighet|egendom"),
         "ansvar": extrahera_belopp_flex(text, "ansvar|ansvarsförsäkring|produktansvar"),
@@ -84,9 +81,6 @@ def extrahera_villkor_ur_pdf(text):
         "premie": extrahera_premie(text),
         "villkorsreferens": "PDF"
     }
-    return villkor
-
-# === REKOMMENDATIONSGENERATOR ===
 def generera_rekommendationer(bransch, data):
     rekommendationer = []
 
@@ -98,53 +92,51 @@ def generera_rekommendationer(bransch, data):
     if bransch == "it":
         if ansvar < 5_000_000:
             rekommendationer.append("🔍 Ansvarsförsäkring bör täcka minst 5–10 Mkr för IT-fel – överväg höjning.")
-        if "cyber" not in data.get("undantag", "").lower() and "cyber" not in data.get("villkorsreferens", "").lower():
+        if "cyber" not in data.get("undantag", "").lower():
             rekommendationer.append("💻 Ingen cyberförsäkring hittades – viktigt skydd vid dataintrång och driftstopp.")
         if egendom < 100_000:
-            rekommendationer.append("🖥️ Egendomsförsäkring (ex. datorer, servrar) verkar låg – kontrollera värdet.")
+            rekommendationer.append("🖥️ Egendomsförsäkring verkar låg – kontrollera värdet.")
 
     elif bransch == "industri":
         if ansvar < 10_000_000:
-            rekommendationer.append("🛠️ Produkt-/ansvarsförsäkring bör vara minst 10 Mkr – justera vid export/högrisk.")
-        if egendom < 500_000:
-            rekommendationer.append("🏭 Egendom (maskiner, byggnad) verkar låg – risk för underförsäkring.")
+            rekommendationer.append("🏭 Ansvarsförsäkring bör vara minst 10 Mkr.")
         if avbrott < 0.1 * premie:
-            rekommendationer.append("📉 Avbrottsförsäkring bör täcka 10–30% av årsomsättning – verkar saknas eller låg.")
+            rekommendationer.append("📉 Avbrottsförsäkring verkar låg i förhållande till premie.")
+        if egendom < 1_000_000:
+            rekommendationer.append("🏗️ Kontrollera att egendom är fullvärdesförsäkrad.")
 
     elif bransch == "transport":
         if ansvar < 5_000_000:
-            rekommendationer.append("🚚 Ansvarsförsäkring för lastning/lager bör vara minst 5 Mkr.")
+            rekommendationer.append("🚚 Ansvar bör täcka minst 5 Mkr vid skador under transport.")
         if avbrott == 0:
-            rekommendationer.append("📦 Ingen avbrottsförsäkring funnen – viktigt vid fordons- eller logistikstopp.")
+            rekommendationer.append("⛔ Ingen avbrottsförsäkring hittad – viktigt vid driftsavbrott.")
 
     elif bransch == "konsult":
         if ansvar < 2_000_000:
-            rekommendationer.append("📊 Ansvarsförsäkring (förmögenhetsskada) bör vara minst 2–5 Mkr – saknas/låg?")
+            rekommendationer.append("🧑‍💼 Konsultansvar bör vara minst 2 Mkr.")
         if "rättsskydd" not in data.get("undantag", "").lower():
-            rekommendationer.append("⚖️ Kontrollera att rättsskydd ingår – viktigt vid kundtvister.")
+            rekommendationer.append("⚖️ Saknar spår av rättsskydd – viktigt vid tvister.")
 
     elif bransch == "bygg":
         if ansvar < 10_000_000:
-            rekommendationer.append("🏗️ AB04/ABT06 kräver ansvar minst 10 Mkr – höj beloppet.")
-        if "entreprenad" not in data.get("villkorsreferens", "").lower():
-            rekommendationer.append("🧱 Saknar entreprenadförsäkring (allrisk) – krävs för byggprojekt.")
+            rekommendationer.append("🏗️ ABT06 kräver normalt ansvar >10 Mkr.")
+        if egendom < 500_000:
+            rekommendationer.append("🔧 Egendom verkar låg – kontrollera verktyg och maskiner.")
 
     elif bransch == "handel":
-        if egendom < 300_000:
-            rekommendationer.append("🏬 Lågt egendomsskydd – kontrollera lagervärde och inventarier.")
+        if egendom < 500_000:
+            rekommendationer.append("🏬 Egendomsskydd verkar lågt – lager? inventarier?")
         if avbrott == 0:
-            rekommendationer.append("🚫 Avbrottsförsäkring saknas – kritiskt vid driftstopp.")
+            rekommendationer.append("⚠️ Avbrottsskydd verkar saknas – kritiskt vid brand/stöld.")
 
     elif bransch == "vård":
         if ansvar < 10_000_000:
-            rekommendationer.append("💉 Vårdansvar bör täcka minst 10 Mkr utöver patientförsäkring.")
+            rekommendationer.append("💉 Vårdansvarsförsäkring verkar låg (<10 Mkr).")
         if "patient" not in data.get("villkorsreferens", "").lower():
-            rekommendationer.append("🩺 Ingen patientförsäkring hittad – lagkrav enligt patientskadelagen.")
+            rekommendationer.append("❗ Patientförsäkring saknas i text – krävs enligt lag.")
 
-    if not rekommendationer:
-        return ["✅ Försäkringsskyddet verkar tillfredsställande utifrån den angivna branschen."]
-    return rekommendationer
-# === POÄNGSÄTTNING ===
+    return rekommendationer if rekommendationer else ["✅ Försäkringsskyddet verkar tillfredsställande."]
+
 def poangsatt_villkor(villkor_list):
     df = pd.DataFrame(villkor_list)
 
@@ -182,7 +174,6 @@ def poangsatt_villkor(villkor_list):
         "Försäkringsgivare", "Premie", "Självrisk", "Egendom", "Ansvar", "Avbrott", "Undantag", "Källa", "Totalpoäng"
     ]]
 
-# === FÄRGSYSTEM ===
 def färgschema(value):
     if value >= 8:
         return 'background-color: #b6fcb6'
@@ -193,7 +184,6 @@ def färgschema(value):
     else:
         return 'background-color: #fcb6b6'
 
-# === WORD-EXPORT ===
 def generera_word_dokument(data):
     doc = Document()
     doc.add_heading("Upphandlingsunderlag – Försäkringsjämförelse", level=1)
@@ -209,7 +199,6 @@ def generera_word_dokument(data):
     doc.save(buffer)
     buffer.seek(0)
     return buffer
-
 # === HUVUDAPP ===
 if __name__ == "__main__":
     st.set_page_config(page_title="Försäkringsguide", page_icon="🛡️", layout="centered")
