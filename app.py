@@ -41,23 +41,22 @@ def läs_pdf_text(pdf_file):
         return "\n".join([page.extract_text() or "" for page in reader.pages])
 def extrahera_premie(text):
     patterns = [
-        r"bruttopremie[:\s]*([\d\s]+) ?kr",
-        r"nettopremie[:\s]*([\d\s]+) ?kr",
-        r"pris per år[:\s]*([\d\s]+)",
-        r"premie[:\s]*([\d\s]+) ?kr",
-        r"total kostnad[:\s]*([\d\s]+)",
-        r"pris[:\s]*([\d\s]+)"
+        r"(bruttopremie|nettopremie|total premie|totalkostnad|totalt|premie|pris)[^\d]{0,15}([\d\s]+)[\s]*(kr|sek|kronor)?",
+        r"SEK[\s]*([\d\s]+)",
+        r"Totalt[\s]*([\d\s]+)[\s]*(kr|sek|kronor)?",
+        r"Pris för tiden[\s\S]{0,10}?([\d\s]+)"
     ]
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
+            raw = match.group(2 if len(match.groups()) > 1 else 1)
+            raw = raw.replace(" ", "").replace(",", "").replace(".", "")
             try:
-                value = match.group(1).replace(" ", "")
-                return int(value)
-            except:
+                return int(raw)
+            except ValueError:
                 continue
     return 0
-
+    
 def extrahera_forsakringsgivare(text):
     match = re.search(r"(if|lf|trygg-hansa|moderna|protector|svedea|folksam|gjensidige|dina|lanförsäkringar)", text, re.IGNORECASE)
     return match.group(1).capitalize() if match else "Okänt"
