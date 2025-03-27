@@ -57,18 +57,34 @@ def läs_pdf_text(pdf_file):
         if content:
             text += content + "\n"
     return text
-# === EXTRAHERA PDF-VILLKOR ===
+# === SMART PREMIEPARSER ===
+def extrahera_premie(text):
+    premie_regex = re.compile(
+        r'(bruttopremie|nettopremie|pris per år|totalkostnad|försäkringskostnad|premie|att betala|totalpremie|pris)\D{0,10}([\d\s.,]+(?:kr|:-)?)',
+        flags=re.IGNORECASE
+    )
+    matches = premie_regex.findall(text)
+    for _, raw in matches:
+        raw = raw.replace("kr", "").replace(":-", "").replace(" ", "").replace(".", "")
+        try:
+            return int(float(raw))
+        except:
+            continue
+    return 0
+
+# === EXTRAHERA VILLKOR ===
 def extrahera_villkor_ur_pdf(text):
-    return {
+    villkor = {
         "försäkringsgivare": extrahera_forsakringsgivare(text),
         "egendom": extrahera_belopp_flex(text, "maskiner|inventarier|byggnad|fastighet|egendom"),
         "ansvar": extrahera_belopp_flex(text, "ansvar|ansvarsförsäkring|produktansvar"),
         "avbrott": extrahera_belopp_flex(text, "avbrott|förlust av täckningsbidrag|omsättning"),
         "självrisk": extrahera_belopp_flex(text, "självrisk"),
         "undantag": extrahera_lista(text, r"(undantag|exkluderat).*?:\s*(.*?)(\n|$)"),
-        "premie": extrahera_belopp_flex(text, r"premie|bruttopremie|nettopremie|kostnad|pris|attbetala|totalpremie|summa"),
+        "premie": extrahera_premie(text),
         "villkorsreferens": "PDF"
     }
+    return villkor
 
 # === REKOMMENDATIONSGENERATOR ===
 def generera_rekommendationer(bransch, data):
@@ -166,7 +182,7 @@ def poangsatt_villkor(villkor_list):
         "Försäkringsgivare", "Premie", "Självrisk", "Egendom", "Ansvar", "Avbrott", "Undantag", "Källa", "Totalpoäng"
     ]]
 
-# === FÄRGSYSTEM FÖR POÄNG ===
+# === FÄRGSYSTEM ===
 def färgschema(value):
     if value >= 8:
         return 'background-color: #b6fcb6'
@@ -193,6 +209,7 @@ def generera_word_dokument(data):
     doc.save(buffer)
     buffer.seek(0)
     return buffer
+
 # === HUVUDAPP ===
 if __name__ == "__main__":
     st.set_page_config(page_title="Försäkringsguide", page_icon="🛡️", layout="centered")
