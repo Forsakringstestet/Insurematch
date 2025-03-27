@@ -8,8 +8,8 @@ from docx import Document
 from PyPDF2 import PdfReader
 from datetime import date, timedelta
 
+# Basbelopp för 2025
 BASBELOPP_2025 = 58800
-
 def to_number(varde):
     try:
         if varde is None:
@@ -39,7 +39,6 @@ def läs_pdf_text(pdf_file):
     except:
         reader = PdfReader(pdf_file)
         return "\n".join([page.extract_text() or "" for page in reader.pages])
-
 def extrahera_premie(text):
     patterns = [
         r"bruttopremie[:\s]*([\d\s]+) ?kr",
@@ -68,7 +67,6 @@ def extrahera_lista(text, pattern):
     if match:
         return match.group(1).strip()
     return ""
-
 def extrahera_villkor_ur_pdf(text):
     def hitta_summa(text, nyckelord, matcha_flera=False):
         mönster = rf"{nyckelord}[^0-9]*([\d\s.,]+)( kr| sek|:-)?"
@@ -91,9 +89,9 @@ def extrahera_villkor_ur_pdf(text):
     return {
         "försäkringsgivare": extrahera_forsakringsgivare(text),
         "egendom": hitta_summa(text, r"(egendom|byggnad|fastighet|maskiner|inventarier)", matcha_flera=True),
-        "ansvar": hitta_summa(text, r"(ansvar|ansvarsförsäkring|produktansvar)", matcha_flera=True),
-        "avbrott": hitta_summa(text, r"(avbrott|förlust av täckningsbidrag|intäktsbortfall)", matcha_flera=True),
-        "självrisk": hitta_summa(text, r"(självrisk|självrisken)"),
+        "ansvar": hitta_summa(text, r"(ansvar|ansvarsförsäkring|produktansvar|verksamhetsansvar)", matcha_flera=True),
+        "avbrott": hitta_summa(text, r"(avbrott|förlust av täckningsbidrag|intäktsbortfall|omsättning)", matcha_flera=True),
+        "självrisk": hitta_summa(text, r"(självrisk|självrisken|grundsjälvrisk)"),
         "undantag": extrahera_lista(text, r"(undantag|exkluderat).*?:\s*(.*?)(\n|$)"),
         "premie": extrahera_premie(text),
         "försäkringstid": extrahera_datumperiod(text),
@@ -114,7 +112,6 @@ def generera_rekommendationer(bransch, data):
             rekommendationer.append("🖥️ Egendom verkar låg – kontrollera kontorsutrustning.")
         if avbrott == 0:
             rekommendationer.append("💻 Avbrottsskydd saknas – kritiskt för IT-system.")
-
     elif bransch == "industri":
         if ansvar < 10_000_000:
             rekommendationer.append("🏭 Ansvarsförsäkring bör vara minst 10 Mkr.")
@@ -122,31 +119,26 @@ def generera_rekommendationer(bransch, data):
             rekommendationer.append("🏗️ Egendom verkar låg – maskiner, lokaler?")
         if avbrott < 0.1 * premie:
             rekommendationer.append("📉 Avbrottsförsäkring verkar låg i relation till premie.")
-
     elif bransch == "transport":
         if ansvar < 5_000_000:
             rekommendationer.append("🚛 Ansvar bör vara minst 5 Mkr.")
         if avbrott == 0:
             rekommendationer.append("📦 Avbrottsskydd saknas – viktigt vid fordonshaveri.")
-
     elif bransch == "konsult":
         if ansvar < 2_000_000:
             rekommendationer.append("🧠 Konsultansvar bör vara minst 2–5 Mkr.")
         if "rättsskydd" not in data.get("undantag", "").lower():
             rekommendationer.append("⚖️ Kontrollera att rättsskydd finns.")
-
     elif bransch == "bygg":
         if ansvar < 10_000_000:
             rekommendationer.append("🔨 ABT04/ABT06 kräver minst 10 Mkr ansvar.")
         if egendom < 500_000:
             rekommendationer.append("🛠️ Lågt skydd – maskiner, verktyg?")
-
     elif bransch == "handel":
         if egendom < 300_000:
             rekommendationer.append("🛒 Kontrollera lagervärde och försäkring.")
         if avbrott == 0:
             rekommendationer.append("🚫 Avbrottsskydd verkar saknas – risk vid driftstopp.")
-
     elif bransch == "vård":
         if ansvar < 10_000_000:
             rekommendationer.append("💉 Vårdansvar bör vara minst 10 Mkr.")
@@ -191,10 +183,9 @@ def poangsatt_villkor(villkor_list):
     }, inplace=True)
 
     return df[[
-        "Försäkringsgivare", "Premie", "Självrisk", "Egendom", "Ansvar", "Avbrott", "Undantag",
-        "Försäkringstid", "Försäkringsnummer", "Källa", "Totalpoäng"
+        "Försäkringsgivare", "Premie", "Självrisk", "Egendom", "Ansvar", "Avbrott",
+        "Undantag", "Försäkringstid", "Försäkringsnummer", "Källa", "Totalpoäng"
     ]]
-
 def färgschema(value):
     if value >= 8:
         return 'background-color: #b6fcb6'
@@ -268,8 +259,24 @@ if __name__ == "__main__":
 
         if villkorslista:
             df = pd.DataFrame(poangsatt_villkor(villkorslista))
+            df = df[[
+                "Försäkringsgivare", "Premie", "Självrisk", "Egendom",
+                "Ansvar", "Avbrott", "Undantag", "Försäkringstid",
+                "Försäkringsnummer", "Källa", "Totalpoäng"
+            ]]
+
             st.subheader("📊 Sammanställning & poängsättning")
-            st.dataframe(df.style.applymap(färgschema, subset=["Totalpoäng"]))
+            st.dataframe(df.style
+                .format({
+                    "Premie": "{:,.0f} kr",
+                    "Självrisk": "{:,.0f} kr",
+                    "Egendom": "{:,.0f} kr",
+                    "Ansvar": "{:,.0f} kr",
+                    "Avbrott": "{:,.0f} kr",
+                    "Totalpoäng": "{:.2f}"
+                })
+                .applymap(färgschema, subset=["Totalpoäng"])
+            )
 
             st.markdown("### 📉 Benchmarking")
             st.markdown(f"**Snittpremie:** {df['Premie'].mean():,.0f} kr  |  **Snittsjälvrisk:** {df['Självrisk'].mean():,.0f} kr  |  **Snittpoäng:** {df['Totalpoäng'].mean():.2f}")
