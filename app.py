@@ -53,13 +53,17 @@ def to_number(varde):
         return 0
 def extrahera_premie(text):
     patterns = [
-        r"(bruttopremie|nettopremie|total premie|totalkostnad|pris för tiden|kostnad|totalt|premie)[^\d]{0,20}([\d\s]+)",
-        r"TOTALT[\s\S]{0,15}SEK[\s]*([\d\s]+)"
+        r"(total[^\n]{0,20}(premie|kostnad|pris|belopp)).*?([\d\s]{3,})\s*(kr|sek)?",
+        r"(bruttopremie|nettopremie|premie totalt|premie).*?([\d\s]{3,})\s*(kr|sek)?",
+        r"(summa).*?([\d\s]{3,})\s*(kr|sek)?",
     ]
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            return to_number(match.group(2))
+            try:
+                return to_number(match.group(3))
+            except:
+                continue
     return 0
 
 def extrahera_självrisk(text):
@@ -98,10 +102,15 @@ def extrahera_ansvar(text):
     return sum(poster.values()), poster
 
 def extrahera_avbrott(text):
-    poster = {"täckningsbidrag": 0, "intäktsbortfall": 0}
+    poster = {
+        "täckningsbidrag": 0,
+        "intäktsbortfall": 0,
+        "omsättning": 0,
+    }
     mönster = {
-        "täckningsbidrag": r"(förlust av täckningsbidrag)[^\d]{0,20}([\d\s]+)",
-        "intäktsbortfall": r"(förlorad omsättning|intäktsbortfall)[^\d]{0,20}([\d\s]+)"
+        "täckningsbidrag": r"(täckningsbidrag|täcknings.*förlust).*?([\d\s]{3,})\s*(kr|sek)?",
+        "intäktsbortfall": r"(intäktsbortfall|förlorad intäkt|förlorad omsättning).*?([\d\s]{3,})\s*(kr|sek)?",
+        "omsättning": r"(avbrott.*omsättning|omsättning för företaget).*?([\d\s]{3,})\s*(kr|sek)?"
     }
     for key, pattern in mönster.items():
         match = re.search(pattern, text, re.IGNORECASE)
@@ -122,11 +131,18 @@ def extrahera_ansvarstid(text):
     return ""
 
 def extrahera_forsakringsgivare(text):
-    match = re.search(r"(if|lf|trygg-hansa|moderna|protector|svedea|folksam|gjensidige|dina|lanförsäkringar)", text, re.IGNORECASE)
-    return match.group(1).capitalize() if match else "Okänt"
+    bolag = [
+        "if", "gjensidige", "trygg-hansa", "moderna", "protector",
+        "svedea", "folksam", "dina", "länsförsäkringar", "lf"
+    ]
+    for namn in bolag:
+        if re.search(rf"\b{namn}\b", text, re.IGNORECASE):
+            return namn.capitalize()
+    return "Okänt"
+
 
 def extrahera_forsakringsnummer(text):
-    match = re.search(r"(försäkringsnummer|avtalsnummer)[^\w]{0,5}([A-Z0-9\-]+)", text, re.IGNORECASE)
+    match = re.search(r"(försäkringsnummer|avtalsnummer)[\s:\-]+([A-Z0-9\-\/]{6,})", text, re.IGNORECASE)
     return match.group(2) if match else ""
 
 def extrahera_forsakringstid(text):
