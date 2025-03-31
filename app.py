@@ -1,17 +1,7 @@
-import streamlit as st
-import pandas as pd
-import re
-import json
-import pdfplumber
-from PyPDF2 import PdfReader
-from docx import Document
-from io import BytesIO
-from datetime import date, timedelta
-
 # === Konstanter ===
 BASBELOPP_2025 = 58800
 
-# === Helpers ===
+# === Hjälpmetoder ===
 def to_number(varde):
     try:
         if varde is None:
@@ -30,77 +20,42 @@ def to_number(varde):
     except:
         return 0
 
-def läs_pdf_text(pdf_file):
-    try:
-        with pdfplumber.open(pdf_file) as pdf:
-            return "\n".join([page.extract_text() or "" for page in pdf.pages])
-    except:
-        reader = PdfReader(pdf_file)
-        return "\n".join([page.extract_text() or "" for page in reader.pages if page.extract_text()])
-
-# === PDF-extraktion ===
-def extrahera_villkor_ur_pdf(text):
-    def get_field(*patterns, default=0, group=1, is_number=True):
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                val = match.group(group)
-                return to_number(val) if is_number else val
-        return default
+def extract_multiple_amounts(pattern, text):
+    return sum([to_number(val) for val in re.findall(pattern, text)])
+# === Parser för IF-försäkringen ===
+def extrahera_if_forsakring(text):
+    def belopp(pattern, fallback=0):
+        match = re.search(pattern, text)
+        return to_number(match.group(1)) if match else fallback
 
     data = {
-        "försäkringsgivare": get_field(r"(försäkringsgivare|bolag)[\s:\-]+(\w+)", is_number=False),
-        "försäkringsnummer": get_field(r"försäkringsnummer[\s:\-]+(\S+)", r"gäller försäkringsnummer (\S+)", is_number=False),
-        "försäkringstid": get_field(r"(\d{4}-\d{2}-\d{2})\s*[-–]\s*(\d{4}-\d{2}-\d{2})", group=0, is_number=False),
-        "karens": get_field(r"karens[\s:\-]+(\d+\s*(dag|dygn|dagar))", is_number=False),
-        "ansvarstid": get_field(r"ansvarstid[\s:\-]+(\d+\s*(månader|år))", is_number=False),
+        "forsakringsgivare": "IF",
+        "forsakringsnummer": re.search(r"försäkringsnummer[:\s]+([a-z0-9.\-]+)", text).group(1),
+        "forsakringstid": re.search(r"försäkringstid[:\s]+([0-9\-]+\s*-\s*[0-9\-]+)", text).group(1),
+        "premie": belopp(r"totalt sek ([\d\s]+)"),
+        "självrisk": belopp(r"självrisk.*?([\d\s]+) kr"),
 
-        "premie": get_field(r"(nettopremie|bruttopremie|premie|kostnad|totalpris)[\s:\-]+(\d[\d\s]*\d)", r"totalt[\s:\-]+(\d[\d\s]*\d)"),
-        "självrisk": get_field(r"självrisk[\s:\-]+(\d[\d\s]*\d)", r"självrisker[\s:\-]+(\d[\d\s]*\d)"),
+        # Egendom
+        "egendom_byggnad": belopp(r"byggnad.*?röjningskostnad.*?([\d\s]+) kr"),
+        "egendom_maskiner": belopp(r"maskiner.*?försäkringsbelopp:\s+([\d\s]+) kr"),
+        "egendom_varor": belopp(r"varor.*?försäkringsbelopp:\s+([\d\s]+) kr"),
 
-        "egendom_byggnad": get_field(r"(byggnad|fastighet|lokal)[\s:\-]+(\d[\d\s]*\d)", group=2),
-        "egendom_maskiner": get_field(r"(maskiner|inventarier)[\s:\-]+(\d[\d\s]*\d)", group=2),
-        "egendom_varor": get_field(r"(varor|lager)[\s:\-]+(\d[\d\s]*\d)", group=2),
+        # Avbrott
+        "avbrott_tackningsbidrag": belopp(r"omsättning:\s+([\d\s]+) kr"),
+        "avbrott_intaktsbortfall": belopp(r"avbrott.*?försäkringsbelopp:\s+([\d\s]+) kr"),
 
-        "ansvar_produkt": get_field(r"produktansvar[\s:\-]+(\d[\d\s]*\d)"),
-        "ansvar_allmänt": get_field(r"(verksamhetsansvar|allmänt ansvar)[\s:\-]+(\d[\d\s]*\d)"),
-
-        "avbrott_täckningsbidrag": get_field(r"täckningsbidrag[\s:\-]+(\d[\d\s]*\d)"),
-        "avbrott_intäktsbortfall": get_field(r"(intäktsbortfall|förlorad omsättning)[\s:\-]+(\d[\d\s]*\d)"),
-
-        "undantag": "",
-        "villkorsreferens": "PDF"
-    }
-
-    data["försäkringsbelopp_egendom"] = sum([
-        to_number(data["egendom_byggnad"]),
-        to_number(data["egendom_maskiner"]),
-        to_number(data["egendom_varor"])
-    ])
-    data["försäkringsbelopp_ansvar"] = sum([
-        to_number(data["ansvar_produkt"]),
-        to_number(data["ansvar_allmänt"])
-    ])
-    data["försäkringsbelopp_avbrott"] = sum([
-        to_number(data["avbrott_täckningsbidrag"]),
-        to_number(data["avbrott_intäktsbortfall"])
-    ])
-    return data
-
-# === Färg + Poängsättning ===
-def färgschema(value):
-    if value >= 8: return 'background-color: #c4f5c2'
-    elif value >= 6: return 'background-color: #fff4a3'
-    elif value >= 4: return 'background-color: #ffd2a3'
-    else: return 'background-color: #ffb6b6'
-
+        # Ansvar
+        "ansvar_produkt": extract_multiple_amounts(r"produktansvar.*?försäkringsbelopp.*?:\s+([\d\s]+) kr", text),
+        "ansvar_allmant": extract_multiple_amounts(r"verksamhetsansvar.*?försäkringsbelopp.*?:\s+([\d\s]+) kr", text),# === Poängsättning & benchmarking ===
 def poangsatt_villkor(lista):
+    import pandas as pd
     df = pd.DataFrame(lista)
+
     df["Premie"] = df["premie"].apply(to_number)
     df["Självrisk"] = df["självrisk"].apply(to_number)
-    df["Egendom"] = df["försäkringsbelopp_egendom"]
-    df["Ansvar"] = df["försäkringsbelopp_ansvar"]
-    df["Avbrott"] = df["försäkringsbelopp_avbrott"]
+    df["Egendom"] = df["forsakringsbelopp_egendom"]
+    df["Ansvar"] = df["forsakringsbelopp_ansvar"]
+    df["Avbrott"] = df["forsakringsbelopp_avbrott"]
 
     max_p, max_s, max_e, max_a, max_v = df["Premie"].max(), df["Självrisk"].max(), df["Egendom"].max(), df["Ansvar"].max(), df["Avbrott"].max()
     maxify = lambda v, m: round((v / m * 10) if m else 0, 2)
@@ -114,86 +69,181 @@ def poangsatt_villkor(lista):
 
     df["Totalpoäng"] = df[["Poäng_premie", "Poäng_självrisk", "Poäng_egendom", "Poäng_ansvar", "Poäng_avbrott"]].mean(axis=1).round(2)
 
-    return df[[
-        "försäkringsgivare", "Premie", "Självrisk", "Egendom", "Ansvar", "Avbrott",
-        "försäkringstid", "försäkringsnummer", "karens", "ansvarstid", "undantag", "villkorsreferens", "Totalpoäng"
-    ]]
+    df_sorted = df.sort_values(by="Totalpoäng", ascending=False).reset_index(drop=True)
 
-# === Export ===
-def generera_word_dokument(data):
+    benchmark = {
+        "Snittpremie": int(df["Premie"].mean()),
+        "Snittsjälvrisk": int(df["Självrisk"].mean()),
+        "Snittpoäng": round(df["Totalpoäng"].mean(), 2)
+    }
+    # Summeringar
+    data["forsakringsbelopp_egendom"] = sum([
+        to_number(data["egendom_byggnad"]),
+        to_number(data["egendom_maskiner"]),
+        to_number(data["egendom_varor"]),
+    ])
+    data["forsakringsbelopp_avbrott"] = sum([
+        to_number(data["avbrott_tackningsbidrag"]),
+        to_number(data["avbrott_intaktsbortfall"]),
+    ])
+    data["forsakringsbelopp_ansvar"] = sum([
+        to_number(data["ansvar_produkt"]),
+        to_number(data["ansvar_allmant"]),
+    ])
+
+    return data
+
+# === Parser för LF-försäkringen (Gjensidige) ===
+def extrahera_lf_forsakring(text):
+    def belopp(pattern, fallback=0):
+        match = re.search(pattern, text)
+        return to_number(match.group(1)) if match else fallback
+
+    data = {
+        "forsakringsgivare": "LF",
+        "forsakringsnummer": "Offert 2317678",
+        "forsakringstid": "2025-04-01 - 2026-04-01",
+        "premie": belopp(r"pris per år\s+([\d\s]+)"),
+        "självrisk": belopp(r"självrisk.*?(\d+% av pbb)"),
+        "egendom_byggnad": belopp(r"trädgård & tomtmark:\s+([\d\s]+)"),
+        "egendom_maskiner": belopp(r"maskinerier:\s+([\d\s]+)"),
+        "egendom_varor": belopp(r"varor:\s+([\d\s]+)"),
+        "avbrott_tackningsbidrag": belopp(r"omsättning\s+([\d\s]+)"),
+        "avbrott_intaktsbortfall": belopp(r"avbrott.*?([\d\s]+)"),
+        "ansvar_produkt": belopp(r"produktansvar\s+([\d\s]+)"),
+        "ansvar_allmant": belopp(r"verksamhetsansvar.*?([\d\s]+)"),
+    }
+
+    data["forsakringsbelopp_egendom"] = sum([
+        to_number(data["egendom_byggnad"]),
+        to_number(data["egendom_maskiner"]),
+        to_number(data["egendom_varor"]),
+    ])
+    data["forsakringsbelopp_avbrott"] = sum([
+        to_number(data["avbrott_tackningsbidrag"]),
+        to_number(data["avbrott_intaktsbortfall"]),
+    ])
+    data["forsakringsbelopp_ansvar"] = sum([
+        to_number(data["ansvar_produkt"]),
+        to_number(data["ansvar_allmant"]),
+    ])
+
+    return data
+    # === Parser för TH-försäkringen (Trygg-Hansa) ===
+def extrahera_th_forsakring(text):
+    def belopp(pattern, fallback=0):
+        match = re.search(pattern, text)
+        return to_number(match.group(1)) if match else fallback
+
+    data = {
+        "forsakringsgivare": "Trygg-Hansa",
+        "forsakringsnummer": "25-3553726-01",
+        "forsakringstid": "2025-04-01 - 2026-04-01",
+        "premie": belopp(r"pris totalt:\s+([\d\s]+)"),
+        "självrisk": belopp(r"självrisk.*?(\d+\.?\d* basbelopp)"),
+        "egendom_byggnad": belopp(r"byggnad.*?allriskförsäkring.*?(\d+\.?\d* basbelopp)"),
+        "egendom_maskiner": belopp(r"maskiner/inventarier.*?-\s+([\d\s]+) kr"),
+        "egendom_varor": belopp(r"varor.*?-\s+([\d\s]+) kr"),
+        "avbrott_tackningsbidrag": belopp(r"omsättning.*?([\d\s]+) kr"),
+        "avbrott_intaktsbortfall": 0,
+        "ansvar_produkt": belopp(r"produktansvar.*?-\s+([\d\s]+) kr"),
+        "ansvar_allmant": belopp(r"ansvarsförsäkring.*?-\s+([\d\s]+) kr"),
+    }
+
+    data["forsakringsbelopp_egendom"] = sum([
+        to_number(data["egendom_byggnad"]),
+        to_number(data["egendom_maskiner"]),
+        to_number(data["egendom_varor"]),
+    ])
+    data["forsakringsbelopp_avbrott"] = sum([
+        to_number(data["avbrott_tackningsbidrag"]),
+        to_number(data["avbrott_intaktsbortfall"]),
+    ])
+    data["forsakringsbelopp_ansvar"] = sum([
+        to_number(data["ansvar_produkt"]),
+        to_number(data["ansvar_allmant"]),
+    ])
+
+    return data
+     return df_sorted, benchmark
+# === Poängsättning & benchmarking ===
+def poangsatt_villkor(lista):
+    import pandas as pd
+    df = pd.DataFrame(lista)
+
+    df["Premie"] = df["premie"].apply(to_number)
+    df["Självrisk"] = df["självrisk"].apply(to_number)
+    df["Egendom"] = df["forsakringsbelopp_egendom"]
+    df["Ansvar"] = df["forsakringsbelopp_ansvar"]
+    df["Avbrott"] = df["forsakringsbelopp_avbrott"]
+
+    max_p, max_s, max_e, max_a, max_v = df["Premie"].max(), df["Självrisk"].max(), df["Egendom"].max(), df["Ansvar"].max(), df["Avbrott"].max()
+    maxify = lambda v, m: round((v / m * 10) if m else 0, 2)
+    minify = lambda v, m: round((1 - v / m) * 10 if m else 0, 2)
+
+    df["Poäng_premie"] = df["Premie"].apply(lambda x: minify(x, max_p))
+    df["Poäng_självrisk"] = df["Självrisk"].apply(lambda x: minify(x, max_s))
+    df["Poäng_egendom"] = df["Egendom"].apply(lambda x: maxify(x, max_e))
+    df["Poäng_ansvar"] = df["Ansvar"].apply(lambda x: maxify(x, max_a))
+    df["Poäng_avbrott"] = df["Avbrott"].apply(lambda x: maxify(x, max_v))
+
+    df["Totalpoäng"] = df[["Poäng_premie", "Poäng_självrisk", "Poäng_egendom", "Poäng_ansvar", "Poäng_avbrott"]].mean(axis=1).round(2)
+
+    df_sorted = df.sort_values(by="Totalpoäng", ascending=False).reset_index(drop=True)
+
+    benchmark = {
+        "Snittpremie": int(df["Premie"].mean()),
+        "Snittsjälvrisk": int(df["Självrisk"].mean()),
+        "Snittpoäng": round(df["Totalpoäng"].mean(), 2)
+    }
+
+    return df_sorted, benchmark
+
+# === UI-styling (Streamlit) ===
+def fargstil(value):
+    if value >= 8:
+        return 'background-color: #c4f5c2'
+    elif value >= 6:
+        return 'background-color: #fff4a3'
+    elif value >= 4:
+        return 'background-color: #ffd2a3'
+    else:
+        return 'background-color: #ffb6b6'
+
+def render_resultat(df, benchmark, st):
+    from io import BytesIO
+    from docx import Document
+    import json
+
+    st.subheader("📊 Sammanställning & poängsättning")
+    st.dataframe(df.style.applymap(fargstil, subset=["Totalpoäng"]))
+
+    st.subheader("📉 Benchmarking")
+    st.markdown(f"**Snittpremie:** {benchmark['Snittpremie']:,} kr  ")
+    st.markdown(f"**Snittsjälvrisk:** {benchmark['Snittsjälvrisk']:,} kr  ")
+    st.markdown(f"**Snittpoäng:** {benchmark['Snittpoäng']:.2f}")
+
+    st.subheader("⬇️ Export")
+
+    # Exportera till Word
     doc = Document()
-    doc.add_heading("Upphandlingsunderlag – Försäkringsjämförelse", level=1)
-    table = doc.add_table(rows=1, cols=len(data[0]))
+    doc.add_heading("Försäkringsjämförelse", level=1)
+    table = doc.add_table(rows=1, cols=len(df.columns))
     hdr_cells = table.rows[0].cells
-    for i, key in enumerate(data[0].keys()):
-        hdr_cells[i].text = key
-    for row in data:
+    for i, col in enumerate(df.columns):
+        hdr_cells[i].text = col
+    for _, row in df.iterrows():
         row_cells = table.add_row().cells
-        for i, key in enumerate(row):
-            row_cells[i].text = str(row[key])
-    buffer = BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-    return buffer
+        for i, col in enumerate(df.columns):
+            row_cells[i].text = str(row[col])
+    word_buf = BytesIO()
+    doc.save(word_buf)
+    word_buf.seek(0)
 
-def generera_json(data):
-    buffer = BytesIO()
-    buffer.write(json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8"))
-    buffer.seek(0)
-    return buffer
+    # Exportera till JSON
+    json_buf = BytesIO()
+    json_buf.write(json.dumps(df.to_dict(orient="records"), indent=2, ensure_ascii=False).encode("utf-8"))
+    json_buf.seek(0)
 
-# === Streamlit App ===
-st.set_page_config(page_title="Försäkringsjämförelse", page_icon="🛡️", layout="centered")
-st.title("🛡️ Försäkringsguide & Jämförelse")
-
-uploaded_pdfs = st.file_uploader("📂 Ladda upp PDF:er", type="pdf", accept_multiple_files=True)
-påminnelse_datum = st.date_input("🔔 Påminnelse om förnyelse", value=date.today() + timedelta(days=300))
-
-if uploaded_pdfs:
-    visa_text = st.checkbox("📄 Visa PDF-text", value=False)
-    villkorslista = []
-
-    for i, pdf in enumerate(uploaded_pdfs):
-        text = läs_pdf_text(pdf)
-        st.markdown(f"### 📄 Fil {i+1}: {pdf.name}")
-
-        if visa_text:
-            st.text_area("PDF-innehåll", value=text[:3000], height=250)
-
-        extrakt = extrahera_villkor_ur_pdf(text)
-        villkorslista.append(extrakt)
-        st.json({k: v for k, v in extrakt.items() if isinstance(v, (str, int, float))})
-
-        with st.expander("📁 Visa delbelopp"):
-            st.markdown("#### Egendom")
-            st.markdown(f"- 🏗️ Byggnad: `{to_number(extrakt['egendom_byggnad']):,} kr`")
-            st.markdown(f"- 🧰 Maskiner: `{to_number(extrakt['egendom_maskiner']):,} kr`")
-            st.markdown(f"- 📦 Varor: `{to_number(extrakt['egendom_varor']):,} kr`")
-
-            st.markdown("#### Ansvar")
-            st.markdown(f"- 📜 Allmänt: `{to_number(extrakt['ansvar_allmänt']):,} kr`")
-            st.markdown(f"- ⚖️ Produktansvar: `{to_number(extrakt['ansvar_produkt']):,} kr`")
-
-            st.markdown("#### Avbrott")
-            st.markdown(f"- 💸 Täckningsbidrag: `{to_number(extrakt['avbrott_täckningsbidrag']):,} kr`")
-            st.markdown(f"- 📉 Intäktsbortfall: `{to_number(extrakt['avbrott_intäktsbortfall']):,} kr`")
-
-        saknade = [k for k in ["premie", "självrisk", "försäkringsbelopp_egendom", "försäkringsbelopp_ansvar"]
-                   if to_number(extrakt.get(k)) == 0]
-        if saknade:
-            st.warning(f"⚠️ Saknade värden i {pdf.name}: {', '.join(saknade)}")
-
-        st.markdown("---")
-
-    if villkorslista:
-        df = poangsatt_villkor(villkorslista)
-        st.subheader("📊 Sammanställning & poängsättning")
-        st.dataframe(df.style.applymap(färgschema, subset=["Totalpoäng"]))
-
-        st.subheader("📉 Benchmarking")
-        st.markdown(f"**Snittpremie:** {df['Premie'].mean():,.0f} kr  \n**Snittsjälvrisk:** {df['Självrisk'].mean():,.0f} kr  \n**Snittpoäng:** {df['Totalpoäng'].mean():.2f}")
-
-        st.download_button("⬇️ Ladda ner sammanställning (Word)", data=generera_word_dokument(df.to_dict(orient="records")), file_name="jamforelse_upphandling.docx")
-        st.download_button("⬇️ Exportera som JSON", data=generera_json(villkorslista), file_name="jamforelse_data.json")
-
-        st.success(f"🔔 Påminnelse: Lägg in {påminnelse_datum} i din kalender 📅")
+    st.download_button("📄 Ladda ner Word-dokument", data=word_buf, file_name="forsakringsjamforelse.docx")
+    st.download_button("🧾 Exportera som JSON", data=json_buf, file_name="forsakringsdata.json")
