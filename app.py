@@ -8,27 +8,10 @@ from docx import Document
 from io import BytesIO
 from datetime import date, timedelta
 
-# === Globala konstanter ===
+# === Konstanter ===
 BASBELOPP_2025 = 58800
 
-# === Robust PDF-läsare (fallback) ===
-def läs_pdf_text(pdf_file):
-    try:
-        with pdfplumber.open(pdf_file) as pdf:
-            return "\n".join([page.extract_text() or "" for page in pdf.pages])
-    except Exception as e:
-        reader = PdfReader(pdf_file)
-        text = ""
-        for page in reader.pages:
-            try:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n"
-            except:
-                pass
-        return text
-
-# === Valörkonvertering ===
+# === Valör-konverterare ===
 def to_number(varde):
     try:
         if varde is None:
@@ -51,95 +34,40 @@ def to_number(varde):
     except Exception as e:
         st.warning(f"⚠️ Fel vid konvertering till nummer: {varde} → {e}")
         return 0
-def extrahera_premie(text):
-    patterns = [
-        r"(total[^\n]{0,20}(premie|kostnad|pris|belopp)).*?([\d\s]{3,})\s*(kr|sek)?",
-        r"(bruttopremie|nettopremie|premie totalt|premie).*?([\d\s]{3,})\s*(kr|sek)?",
-        r"(summa).*?([\d\s]{3,})\s*(kr|sek)?",
-    ]
+
+# === PDF-läsare med fallback ===
+def läs_pdf_text(pdf_file):
+    try:
+        with pdfplumber.open(pdf_file) as pdf:
+            return "\n".join([page.extract_text() or "" for page in pdf.pages])
+    except:
+        reader = PdfReader(pdf_file)
+        return "\n".join([page.extract_text() or "" for page in reader.pages if page.extract_text()])
+def extract_by_patterns(text, patterns):
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            try:
-                return to_number(match.group(3))
-            except:
-                continue
+            return to_number(match.group(2))
     return 0
 
-def extrahera_självrisk(text):
-    patterns = [
-        r"(självrisk)[^\d]{0,15}([\d\s]+)(\s*(kr|sek|basbelopp|bb)?)"
-    ]
+def extract_självrisk(text, patterns):
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            return to_number(match.group(2) + match.group(3))
+            value = match.group(2)
+            suffix = match.group(3).lower() if match.group(3) else ""
+            if "basbelopp" in suffix or "bb" in suffix:
+                return int(float(value.replace(",", ".")) * BASBELOPP_2025)
+            else:
+                return to_number(value)
     return 0
-
-def extrahera_egendom(text):
-    poster = {"byggnad": 0, "maskiner": 0, "varor": 0}
-    mönster = {
-        "byggnad": r"(byggnad|verkstadsbyggnad)[^\d]{0,20}([\d\s]+)",
-        "maskiner": r"(maskiner|inventarier)[^\d]{0,20}([\d\s]+)",
-        "varor": r"(varor|lager)[^\d]{0,20}([\d\s]+)"
-    }
-    for key, pattern in mönster.items():
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            poster[key] = to_number(match.group(2))
-    return sum(poster.values()), poster
-
-def extrahera_ansvar(text):
-    poster = {"allmänt": 0, "produkt": 0}
-    mönster = {
-        "allmänt": r"(ansvarsförsäkring|verksamhetsansvar)[^\d]{0,20}([\d\s]+)",
-        "produkt": r"(produktansvar)[^\d]{0,20}([\d\s]+)"
-    }
-    for key, pattern in mönster.items():
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            poster[key] = to_number(match.group(2))
-    return sum(poster.values()), poster
-
-def extrahera_avbrott(text):
-    poster = {
-        "täckningsbidrag": 0,
-        "intäktsbortfall": 0,
-        "omsättning": 0,
-    }
-    mönster = {
-        "täckningsbidrag": r"(täckningsbidrag|täcknings.*förlust).*?([\d\s]{3,})\s*(kr|sek)?",
-        "intäktsbortfall": r"(intäktsbortfall|förlorad intäkt|förlorad omsättning).*?([\d\s]{3,})\s*(kr|sek)?",
-        "omsättning": r"(avbrott.*omsättning|omsättning för företaget).*?([\d\s]{3,})\s*(kr|sek)?"
-    }
-    for key, pattern in mönster.items():
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            poster[key] = to_number(match.group(2))
-    return sum(poster.values()), poster
-
-def extrahera_karens(text):
-    match = re.search(r"(karens|karensdagar)[^\d]{0,10}(\d{1,3})", text, re.IGNORECASE)
-    if match:
-        return f"{match.group(2)} dagar"
-    return ""
-
-def extrahera_ansvarstid(text):
-    match = re.search(r"(ansvarstid|ersättningstid)[^\d]{0,10}(\d{1,3})", text, re.IGNORECASE)
-    if match:
-        return f"{match.group(2)} månader"
-    return ""
 
 def extrahera_forsakringsgivare(text):
-    bolag = [
-        "if", "gjensidige", "trygg-hansa", "moderna", "protector",
-        "svedea", "folksam", "dina", "länsförsäkringar", "lf"
-    ]
+    bolag = ["if", "gjensidige", "trygg-hansa", "moderna", "protector", "svedea", "folksam", "dina", "länsförsäkringar", "lf"]
     for namn in bolag:
         if re.search(rf"\b{namn}\b", text, re.IGNORECASE):
             return namn.capitalize()
     return "Okänt"
-
 
 def extrahera_forsakringsnummer(text):
     match = re.search(r"(försäkringsnummer|avtalsnummer)[\s:\-]+([A-Z0-9\-\/]{6,})", text, re.IGNORECASE)
@@ -149,45 +77,84 @@ def extrahera_forsakringstid(text):
     match = re.search(r"(\d{4}-\d{2}-\d{2})\s*(–|till|-)\s*(\d{4}-\d{2}-\d{2})", text)
     return f"{match.group(1)} – {match.group(3)}" if match else ""
 
+def extrahera_karens(text):
+    match = re.search(r"(karens|karensdagar)[^\d]{0,10}(\d{1,3})", text, re.IGNORECASE)
+    return f"{match.group(2)} dagar" if match else ""
+
+def extrahera_ansvarstid(text):
+    match = re.search(r"(ansvarstid|ersättningstid)[^\d]{0,10}(\d{1,3})", text, re.IGNORECASE)
+    return f"{match.group(2)} månader" if match else ""
+
 def extrahera_lank(text):
     match = re.search(r"https?://[^\s]+", text)
     return match.group(0) if match else "PDF"
 def extrahera_villkor_ur_pdf(text):
-    premie = extrahera_premie(text)
-    självrisk = extrahera_självrisk(text)
-    egendom_total, egendom_delar = extrahera_egendom(text)
-    ansvar_total, ansvar_delar = extrahera_ansvar(text)
-    avbrott_total, avbrott_delar = extrahera_avbrott(text)
+    premie_patterns = [
+        r"(premie|total(?!.*belopp)|pris totalt|summa att betala|kostnad)[^\d]{0,20}([\d\s]+)",
+        r"pris för tiden[^\d]{0,20}([\d\s]+)"
+    ]
+    premie = extract_by_patterns(text, premie_patterns)
+
+    självrisk_patterns = [
+        r"(självrisk)[^\d]{0,15}([\d\s]+(?:\.\d+)?)(\s*(kr|sek|basbelopp|bb)?)"
+    ]
+    självrisk = extract_självrisk(text, självrisk_patterns)
+
+    egendom_poster = {"byggnad": 0, "maskiner": 0, "varor": 0}
+    egendom_patterns = {
+        "byggnad": r"(byggnad|verkstad|fastighet)[^\d]{0,20}([\d\s]+)",
+        "maskiner": r"(maskiner|inventarier)[^\d]{0,20}([\d\s]+)",
+        "varor": r"(varor|lager)[^\d]{0,20}([\d\s]+)"
+    }
+    for key, pattern in egendom_patterns.items():
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            egendom_poster[key] = to_number(match.group(2))
+    försäkringsbelopp_egendom = sum(egendom_poster.values())
+
+    ansvar_poster = {"produkt": 0, "allmänt": 0}
+    ansvar_patterns = {
+        "produkt": r"(produktansvar)[^\d]{0,20}([\d\s]+)",
+        "allmänt": r"(ansvarsförsäkring|verksamhetsansvar)[^\d]{0,20}([\d\s]+)"
+    }
+    for key, pattern in ansvar_patterns.items():
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            ansvar_poster[key] = to_number(match.group(2))
+    försäkringsbelopp_ansvar = sum(ansvar_poster.values())
+
+    avbrott_poster = {"täckningsbidrag": 0, "intäktsbortfall": 0}
+    avbrott_patterns = {
+        "täckningsbidrag": r"(täckningsbidrag|täcknings.*förlust)[^\d]{0,20}([\d\s]+)",
+        "intäktsbortfall": r"(intäktsbortfall|förlorad omsättning)[^\d]{0,20}([\d\s]+)"
+    }
+    for key, pattern in avbrott_patterns.items():
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            avbrott_poster[key] = to_number(match.group(2))
+    försäkringsbelopp_avbrott = sum(avbrott_poster.values())
 
     return {
         "försäkringsgivare": extrahera_forsakringsgivare(text),
         "premie": premie,
         "självrisk": självrisk,
-
-        # Totala belopp
-        "egendom": egendom_total,
-        "ansvar": ansvar_total,
-        "avbrott": avbrott_total,
-
-        # Delbelopp
-        "egendom_byggnad": egendom_delar.get("byggnad", 0),
-        "egendom_maskiner": egendom_delar.get("maskiner", 0),
-        "egendom_varor": egendom_delar.get("varor", 0),
-        "ansvar_allmänt": ansvar_delar.get("allmänt", 0),
-        "ansvar_produkt": ansvar_delar.get("produkt", 0),
-        "avbrott_täckningsbidrag": avbrott_delar.get("täckningsbidrag", 0),
-        "avbrott_intäktsbortfall": avbrott_delar.get("intäktsbortfall", 0),
-
-        # Metadata
+        "försäkringsbelopp_egendom": försäkringsbelopp_egendom,
+        "försäkringsbelopp_ansvar": försäkringsbelopp_ansvar,
+        "försäkringsbelopp_avbrott": försäkringsbelopp_avbrott,
+        "egendom_byggnad": egendom_poster["byggnad"],
+        "egendom_maskiner": egendom_poster["maskiner"],
+        "egendom_varor": egendom_poster["varor"],
+        "ansvar_allmänt": ansvar_poster["allmänt"],
+        "ansvar_produkt": ansvar_poster["produkt"],
+        "avbrott_täckningsbidrag": avbrott_poster["täckningsbidrag"],
+        "avbrott_intäktsbortfall": avbrott_poster["intäktsbortfall"],
         "karens": extrahera_karens(text),
         "ansvarstid": extrahera_ansvarstid(text),
         "försäkringstid": extrahera_forsakringstid(text),
         "försäkringsnummer": extrahera_forsakringsnummer(text),
         "villkorsreferens": extrahera_lank(text),
-
-        "undantag": ""  # Placeholder – kan fyllas på med extra regler/regex
+        "undantag": ""
     }
-# === Poängfärgning (tabell) ===
 def färgschema(value):
     if value >= 8:
         return 'background-color: #b6fcb6'
@@ -197,8 +164,6 @@ def färgschema(value):
         return 'background-color: #fde2b6'
     else:
         return 'background-color: #fcb6b6'
-
-# === Export till Word ===
 def generera_word_dokument(data):
     doc = Document()
     doc.add_heading("Upphandlingsunderlag – Försäkringsjämförelse", level=1)
@@ -214,26 +179,20 @@ def generera_word_dokument(data):
     doc.save(buffer)
     buffer.seek(0)
     return buffer
-
-# === Export till JSON ===
 def generera_json(data):
     buffer = BytesIO()
     buffer.write(json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8"))
     buffer.seek(0)
     return buffer
-
-# === Poängberäkning ===
 def poangsatt_villkor(villkor_list):
     df = pd.DataFrame(villkor_list)
 
-    # Konvertera numeriskt
     df["Premie"] = df["premie"].apply(to_number)
     df["Självrisk"] = df["självrisk"].apply(to_number)
-    df["Egendom"] = df["egendom"].apply(to_number)
-    df["Ansvar"] = df["ansvar"].apply(to_number)
-    df["Avbrott"] = df["avbrott"].apply(to_number)
+    df["Egendom"] = df["försäkringsbelopp_egendom"]
+    df["Ansvar"] = df["försäkringsbelopp_ansvar"]
+    df["Avbrott"] = df["försäkringsbelopp_avbrott"]
 
-    # Poäng per område (normaliserat)
     df["Premie_poäng"] = 1 / (df["Premie"] + 1)
     df["Självrisk_poäng"] = 1 / (df["Självrisk"] + 1)
     df["Egendom_poäng"] = df["Egendom"]
@@ -244,7 +203,6 @@ def poangsatt_villkor(villkor_list):
         max_val = df[col].max()
         df[col] = df[col] / max_val * 10 if max_val > 0 else 0
 
-    # Bonus: karens (färre dagar är bättre), ansvarstid (längre är bättre)
     def karens_poäng(k):
         if "1" in str(k): return 0.5
         if "2" in str(k): return 0.2
@@ -273,7 +231,6 @@ def poangsatt_villkor(villkor_list):
         df["Bonus_ansvarstid"]
     ).round(2)
 
-    # Renaming för visning
     df.rename(columns={
         "försäkringsgivare": "Försäkringsgivare",
         "undantag": "Undantag",
@@ -294,15 +251,14 @@ if __name__ == "__main__":
     påminnelse_datum = st.date_input("🔔 Vill du få en påminnelse innan förnyelse?", value=date.today() + timedelta(days=300))
 
     if uploaded_pdfs:
-        visa_rådata = st.checkbox("📊 Visa extraherade rådata (per PDF)")
+        visa_rådata = st.checkbox("🧾 Visa extraherade rådata")
         villkorslista = []
-
-        st.markdown("### 📄 Analys per offert")
+        st.markdown("### 📄 Offertanalys")
 
         for i, pdf in enumerate(uploaded_pdfs):
             text = läs_pdf_text(pdf)
             st.markdown(f"#### 📑 Fil {i+1}: {pdf.name}")
-            st.text_area("📃 Innehåll (förhandsgranskning)", value=text[:2000], height=200)
+            st.text_area("📃 PDF-text (förhandsvisning)", value=text[:2000], height=200)
 
             extrakt = extrahera_villkor_ur_pdf(text)
             villkorslista.append(extrakt)
@@ -328,17 +284,21 @@ if __name__ == "__main__":
 
             saknade = [k for k, v in extrakt.items() if to_number(v) == 0 and k not in ["undantag", "villkorsreferens", "karens", "ansvarstid"]]
             if saknade:
-                st.warning(f"⚠️ Saknade fält i {pdf.name}: {', '.join(saknade)}")
+                st.warning(f"⚠️ Saknade värden i {pdf.name}: {', '.join(saknade)}")
 
             st.markdown("---")
-
         if villkorslista:
             df = poangsatt_villkor(villkorslista)
+
             st.subheader("📊 Sammanställning & poängsättning")
             st.dataframe(df.style.applymap(färgschema, subset=["Totalpoäng"]))
 
             st.markdown("### 📉 Benchmarking")
-            st.markdown(f"**Snittpremie:** {df['Premie'].mean():,.0f} kr  |  **Snittsjälvrisk:** {df['Självrisk'].mean():,.0f} kr  |  **Snittpoäng:** {df['Totalpoäng'].mean():.2f}")
+            st.markdown(f"""
+                **Snittpremie:** {df['Premie'].mean():,.0f} kr  
+                **Snittsjälvrisk:** {df['Självrisk'].mean():,.0f} kr  
+                **Snittpoäng:** {df['Totalpoäng'].mean():.2f}
+            """)
 
             st.download_button(
                 "⬇️ Ladda ner sammanställning (Word)",
@@ -352,4 +312,4 @@ if __name__ == "__main__":
                 file_name="jamforelse_data.json"
             )
 
-            st.success(f"🔔 Påminnelse noterat: spara detta datum ({påminnelse_datum}) i din kalender")
+            st.success(f"🔔 Påminnelse sparad: Lägg in {påminnelse_datum} i din kalender")
