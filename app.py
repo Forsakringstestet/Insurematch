@@ -8,25 +8,23 @@ from docx import Document
 from io import BytesIO
 from datetime import date, timedelta
 
+# === Konstanter ===
 BASBELOPP_2025 = 58800
 
+# === Helpers ===
 def to_number(varde):
     try:
         if varde is None:
             return 0
         if isinstance(varde, (int, float)):
             return int(varde)
-        s = str(varde).lower()
-        s = s.replace(" ", "").replace(",", ".").replace("sek", "").replace("kr", "")
+        s = str(varde).lower().replace(" ", "").replace(",", ".").replace("sek", "").replace("kr", "")
         if "basbelopp" in s or "bb" in s:
-            val = float(re.findall(r"(\d+\.?\d*)", s)[0])
-            return int(val * BASBELOPP_2025)
+            return int(float(re.findall(r"(\d+\.?\d*)", s)[0]) * BASBELOPP_2025)
         if "msek" in s or "miljoner" in s:
-            val = float(re.findall(r"(\d+\.?\d*)", s)[0])
-            return int(val * 1_000_000)
+            return int(float(re.findall(r"(\d+\.?\d*)", s)[0]) * 1_000_000)
         if "k" in s:
-            val = float(re.findall(r"(\d+\.?\d*)", s)[0])
-            return int(val * 1_000)
+            return int(float(re.findall(r"(\d+\.?\d*)", s)[0]) * 1_000)
         digits = ''.join(filter(lambda x: x.isdigit() or x == '.', s))
         return int(float(digits)) if digits else 0
     except:
@@ -39,6 +37,8 @@ def läs_pdf_text(pdf_file):
     except:
         reader = PdfReader(pdf_file)
         return "\n".join([page.extract_text() or "" for page in reader.pages if page.extract_text()])
+
+# === PDF-extraktion ===
 def extrahera_villkor_ur_pdf(text):
     def get_field(*patterns, default=0, group=1, is_number=True):
         for pattern in patterns:
@@ -55,10 +55,7 @@ def extrahera_villkor_ur_pdf(text):
         "karens": get_field(r"karens[\s:\-]+(\d+\s*(dag|dygn|dagar))", is_number=False),
         "ansvarstid": get_field(r"ansvarstid[\s:\-]+(\d+\s*(månader|år))", is_number=False),
 
-        "premie": get_field(
-            r"(nettopremie|bruttopremie|premie|kostnad|totalpris)[\s:\-]+(\d[\d\s]*\d)",
-            r"totalt[\s:\-]+(\d[\d\s]*\d)"
-        ),
+        "premie": get_field(r"(nettopremie|bruttopremie|premie|kostnad|totalpris)[\s:\-]+(\d[\d\s]*\d)", r"totalt[\s:\-]+(\d[\d\s]*\d)"),
         "självrisk": get_field(r"självrisk[\s:\-]+(\d[\d\s]*\d)", r"självrisker[\s:\-]+(\d[\d\s]*\d)"),
 
         "egendom_byggnad": get_field(r"(byggnad|fastighet|lokal)[\s:\-]+(\d[\d\s]*\d)", group=2),
@@ -89,6 +86,63 @@ def extrahera_villkor_ur_pdf(text):
         to_number(data["avbrott_intäktsbortfall"])
     ])
     return data
+
+# === Färg + Poängsättning ===
+def färgschema(value):
+    if value >= 8: return 'background-color: #c4f5c2'
+    elif value >= 6: return 'background-color: #fff4a3'
+    elif value >= 4: return 'background-color: #ffd2a3'
+    else: return 'background-color: #ffb6b6'
+
+def poangsatt_villkor(lista):
+    df = pd.DataFrame(lista)
+    df["Premie"] = df["premie"].apply(to_number)
+    df["Självrisk"] = df["självrisk"].apply(to_number)
+    df["Egendom"] = df["försäkringsbelopp_egendom"]
+    df["Ansvar"] = df["försäkringsbelopp_ansvar"]
+    df["Avbrott"] = df["försäkringsbelopp_avbrott"]
+
+    max_p, max_s, max_e, max_a, max_v = df["Premie"].max(), df["Självrisk"].max(), df["Egendom"].max(), df["Ansvar"].max(), df["Avbrott"].max()
+    maxify = lambda v, m: round((v / m * 10) if m else 0, 2)
+    minify = lambda v, m: round((1 - v / m) * 10 if m else 0, 2)
+
+    df["Poäng_premie"] = df["Premie"].apply(lambda x: minify(x, max_p))
+    df["Poäng_självrisk"] = df["Självrisk"].apply(lambda x: minify(x, max_s))
+    df["Poäng_egendom"] = df["Egendom"].apply(lambda x: maxify(x, max_e))
+    df["Poäng_ansvar"] = df["Ansvar"].apply(lambda x: maxify(x, max_a))
+    df["Poäng_avbrott"] = df["Avbrott"].apply(lambda x: maxify(x, max_v))
+
+    df["Totalpoäng"] = df[["Poäng_premie", "Poäng_självrisk", "Poäng_egendom", "Poäng_ansvar", "Poäng_avbrott"]].mean(axis=1).round(2)
+
+    return df[[
+        "försäkringsgivare", "Premie", "Självrisk", "Egendom", "Ansvar", "Avbrott",
+        "försäkringstid", "försäkringsnummer", "karens", "ansvarstid", "undantag", "villkorsreferens", "Totalpoäng"
+    ]]
+
+# === Export ===
+def generera_word_dokument(data):
+    doc = Document()
+    doc.add_heading("Upphandlingsunderlag – Försäkringsjämförelse", level=1)
+    table = doc.add_table(rows=1, cols=len(data[0]))
+    hdr_cells = table.rows[0].cells
+    for i, key in enumerate(data[0].keys()):
+        hdr_cells[i].text = key
+    for row in data:
+        row_cells = table.add_row().cells
+        for i, key in enumerate(row):
+            row_cells[i].text = str(row[key])
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+def generera_json(data):
+    buffer = BytesIO()
+    buffer.write(json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8"))
+    buffer.seek(0)
+    return buffer
+
+# === Streamlit App ===
 st.set_page_config(page_title="Försäkringsjämförelse", page_icon="🛡️", layout="centered")
 st.title("🛡️ Försäkringsguide & Jämförelse")
 
@@ -130,90 +184,16 @@ if uploaded_pdfs:
             st.warning(f"⚠️ Saknade värden i {pdf.name}: {', '.join(saknade)}")
 
         st.markdown("---")
-def färgschema(value):
-    if value >= 8:
-        return 'background-color: #c4f5c2'
-    elif value >= 6:
-        return 'background-color: #fff4a3'
-    elif value >= 4:
-        return 'background-color: #ffd2a3'
-    else:
-        return 'background-color: #ffb6b6'
 
-def poangsatt_villkor(lista):
-    df = pd.DataFrame(lista)
+    if villkorslista:
+        df = poangsatt_villkor(villkorslista)
+        st.subheader("📊 Sammanställning & poängsättning")
+        st.dataframe(df.style.applymap(färgschema, subset=["Totalpoäng"]))
 
-    df["Premie"] = df["premie"].apply(to_number)
-    df["Självrisk"] = df["självrisk"].apply(to_number)
-    df["Egendom"] = df["försäkringsbelopp_egendom"]
-    df["Ansvar"] = df["försäkringsbelopp_ansvar"]
-    df["Avbrott"] = df["försäkringsbelopp_avbrott"]
+        st.subheader("📉 Benchmarking")
+        st.markdown(f"**Snittpremie:** {df['Premie'].mean():,.0f} kr  \n**Snittsjälvrisk:** {df['Självrisk'].mean():,.0f} kr  \n**Snittpoäng:** {df['Totalpoäng'].mean():.2f}")
 
-    max_premie = df["Premie"].max()
-    max_självrisk = df["Självrisk"].max()
-    max_egendom = df["Egendom"].max()
-    max_ansvar = df["Ansvar"].max()
-    max_avbrott = df["Avbrott"].max()
+        st.download_button("⬇️ Ladda ner sammanställning (Word)", data=generera_word_dokument(df.to_dict(orient="records")), file_name="jamforelse_upphandling.docx")
+        st.download_button("⬇️ Exportera som JSON", data=generera_json(villkorslista), file_name="jamforelse_data.json")
 
-    def maxify(v, m): return round((v / m * 10) if m > 0 else 0, 2)
-    def minify(v, m): return round((1 - v / m) * 10 if m > 0 else 0, 2)
-
-    df["Poäng_premie"] = df["Premie"].apply(lambda x: minify(x, max_premie))
-    df["Poäng_självrisk"] = df["Självrisk"].apply(lambda x: minify(x, max_självrisk))
-    df["Poäng_egendom"] = df["Egendom"].apply(lambda x: maxify(x, max_egendom))
-    df["Poäng_ansvar"] = df["Ansvar"].apply(lambda x: maxify(x, max_ansvar))
-    df["Poäng_avbrott"] = df["Avbrott"].apply(lambda x: maxify(x, max_avbrott))
-
-    df["Totalpoäng"] = df[[
-        "Poäng_premie", "Poäng_självrisk", "Poäng_egendom", "Poäng_ansvar", "Poäng_avbrott"
-    ]].mean(axis=1).round(2)
-
-    return df[[
-        "försäkringsgivare", "Premie", "Självrisk", "Egendom", "Ansvar", "Avbrott",
-        "försäkringstid", "försäkringsnummer", "karens", "ansvarstid", "undantag", "villkorsreferens", "Totalpoäng"
-    ]]
-def generera_word_dokument(data):
-    doc = Document()
-    doc.add_heading("Upphandlingsunderlag – Försäkringsjämförelse", level=1)
-    table = doc.add_table(rows=1, cols=len(data[0]))
-    hdr_cells = table.rows[0].cells
-    for i, key in enumerate(data[0].keys()):
-        hdr_cells[i].text = key
-    for row in data:
-        row_cells = table.add_row().cells
-        for i, key in enumerate(row):
-            row_cells[i].text = str(row[key])
-    buffer = BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-    return buffer
-
-def generera_json(data):
-    buffer = BytesIO()
-    buffer.write(json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8"))
-    buffer.seek(0)
-    return buffer
-
-# 📊 GUI: Sammanställning & benchmarking
-if uploaded_pdfs and villkorslista:
-    df = poangsatt_villkor(villkorslista)
-    st.subheader("📊 Sammanställning & poängsättning")
-    st.dataframe(df.style.applymap(färgschema, subset=["Totalpoäng"]))
-
-    st.subheader("📉 Benchmarking")
-    st.markdown(f"""
-        **Snittpremie:** {df['Premie'].mean():,.0f} kr  
-        **Snittsjälvrisk:** {df['Självrisk'].mean():,.0f} kr  
-        **Snittpoäng:** {df['Totalpoäng'].mean():.2f}
-    """)
-
-    st.download_button("⬇️ Ladda ner sammanställning (Word)",
-        data=generera_word_dokument(df.to_dict(orient="records")),
-        file_name="jamforelse_upphandling.docx"
-    )
-    st.download_button("⬇️ Exportera som JSON",
-        data=generera_json(villkorslista),
-        file_name="jamforelse_data.json"
-    )
-
-    st.success(f"🔔 Påminnelse: Lägg in {påminnelse_datum} i din kalender 📅")
+        st.success(f"🔔 Påminnelse: Lägg in {påminnelse_datum} i din kalender 📅")
