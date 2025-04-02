@@ -7,17 +7,34 @@ from ai.openai_advisor import ask_openai, ask_openai_extract
 from export import export_excel, export_pdf, export_word
 
 # ✅ Måste vara först bland Streamlit-kommandon
-st.set_page_config(page_title="Försäkringsanalys", page_icon="📄", layout="wide")
+st.set_page_config(
+    page_title="Försäkringsanalys",
+    page_icon="📄",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
+# 🌐 Anpassat tema (Streamlit themes styrs från .streamlit/config.toml)
+
+# 🎛️ Sidopanel
 st.sidebar.title("🔍 Försäkringsanalysverktyg")
-st.sidebar.info("Ladda upp en eller flera PDF:er med försäkringsinformation för att analysera och jämföra.")
+st.sidebar.markdown("""
+Analysera och jämför PDF-dokument som innehåller:
+- Försäkringsbrev
+- Offerter
+- Villkor
 
-industry = st.sidebar.selectbox("Välj bransch", [
-    "Ingenjörsfirma", "IT-företag", "Tillverkande industri", "Bygg & Entreprenad", "Transport", "Handel", "Annan bransch"])
+Verktyget använder AI för att föreslå förbättringar och summera risker.
+""")
+
+industry = st.sidebar.selectbox("🏭 Välj bransch", [
+    "Ingenjörsfirma", "IT-företag", "Tillverkande industri",
+    "Bygg & Entreprenad", "Transport", "Handel", "Annan bransch"])
 
 st.title("📄 Jämför & Analysera Försäkringsbrev, Offerter & Villkor")
 
-uploaded_files = st.file_uploader("Ladda upp en eller flera PDF-filer", type=["pdf"], accept_multiple_files=True)
+uploaded_files = st.file_uploader(
+    "📤 Ladda upp en eller flera PDF-filer", type=["pdf"], accept_multiple_files=True)
 
 if uploaded_files:
     analysis_results = []
@@ -25,7 +42,7 @@ if uploaded_files:
     for uploaded_file in uploaded_files:
         with st.spinner(f"🔎 Bearbetar {uploaded_file.name}..."):
             text = pdf_extractor.extract_text_from_pdf(uploaded_file)
-            ai_data = ask_openai_extract(text, industry)  # ✅ Uppdaterad med bransch
+            ai_data = ask_openai_extract(text, industry)  # 🧠 AI-driven extraktion med bransch
 
             if not ai_data or "fel" in ai_data:
                 st.warning(f"⚠️ AI-extraktion misslyckades: {ai_data.get('fel') if isinstance(ai_data, dict) else 'Okänt fel'}")
@@ -59,6 +76,17 @@ if uploaded_files:
         """)
         display_pretty_summary(analysis_results)
 
-        st.download_button("📥 Exportera resultat som Excel", export_excel.export_summary_excel(analysis_results), file_name="forsakringsjämforelse.xlsx")
-        st.download_button("📄 Exportera som PDF", export_pdf.export_summary_pdf(analysis_results), file_name="forsakringsjämforelse.pdf")
-        st.download_button("📝 Exportera som Word", export_word.generate_procurement_word(analysis_results), file_name="upphandlingsunderlag.docx")
+        st.download_button(
+            "📥 Exportera resultat som Excel",
+            export_excel.export_summary_excel(analysis_results),
+            file_name="forsakringsjamforelse.xlsx")
+
+        st.download_button(
+            "📄 Exportera som PDF",
+            export_pdf.export_summary_pdf(analysis_results),
+            file_name="forsakringsjamforelse.pdf")
+
+        st.download_button(
+            "📝 Exportera som Word",
+            export_word.generate_procurement_word(analysis_results),
+            file_name="upphandlingsunderlag.docx")
