@@ -1,33 +1,64 @@
-
 import streamlit as st
-from datetime import date, timedelta
-import pdfplumber
-import Forsakrings_Parser as parser
+import pandas as pd
+from utils.visualizer import render_comparison_table
+from utils.enhanced_insurance_ui import display_pretty_summary
+from parser import pdf_extractor, pdf_analyzer
+from ai.openai_advisor import ask_openai, ask_openai_extract
+from export import export_excel, export_pdf, export_word
 
-st.set_page_config(page_title="Försäkringsguide", page_icon="🛡️", layout="centered")
-st.title("🛡️ Försäkringsguide & Jämförelse")
+# ✅ Måste vara först bland Streamlit-kommandon
+st.set_page_config(page_title="Försäkringsanalys", page_icon="📄", layout="wide")
 
-uploaded_files = st.file_uploader("📂 Ladda upp PDF:er", type="pdf", accept_multiple_files=True)
-paminnelse_datum = st.date_input("🔔 Påminnelse om förnyelse", value=date.today() + timedelta(days=300))
+st.sidebar.title("🔍 Försäkringsanalysverktyg")
+st.sidebar.info("Ladda upp en eller flera PDF:er med försäkringsinformation för att analysera och jämföra.")
+
+industry = st.sidebar.selectbox("Välj bransch", [
+    "Ingenjörsfirma", "IT-företag", "Tillverkande industri", "Bygg & Entreprenad", "Transport", "Handel", "Annan bransch"])
+
+st.title("📄 Jämför & Analysera Försäkringsbrev, Offerter & Villkor")
+
+uploaded_files = st.file_uploader("Ladda upp en eller flera PDF-filer", type=["pdf"], accept_multiple_files=True)
 
 if uploaded_files:
-    data = []
-    for file in uploaded_files:
-        with pdfplumber.open(file) as pdf:
-            text = "\n".join([page.extract_text() or "" for page in pdf.pages]).lower()
+    analysis_results = []
 
-        if "trygg-hansa" in text:
-            parsed = parser.extrahera_th_forsakring(text)
-        elif "gjensidige" in text or "lf" in file.name.lower():
-            parsed = parser.extrahera_lf_forsakring(text)
-        else:
-            parsed = parser.extrahera_if_forsakring(text)
+    for uploaded_file in uploaded_files:
+        with st.spinner(f"🔎 Bearbetar {uploaded_file.name}..."):
+            text = pdf_extractor.extract_text_from_pdf(uploaded_file)
+            ai_data = ask_openai_extract(text, industry)  # ✅ Uppdaterad med bransch
 
-        data.append(parsed)
-        st.markdown(f"### 📄 {file.name}")
-        st.json(parsed)
-        st.markdown("---")
+            if not ai_data or "fel" in ai_data:
+                st.warning(f"⚠️ AI-extraktion misslyckades: {ai_data.get('fel') if isinstance(ai_data, dict) else 'Okänt fel'}")
+                continue
 
-    df, benchmark = parser.poangsatt_villkor(data)
-    parser.render_resultat(df, benchmark, st)
-    st.success(f"🔔 Lägg in {paminnelse_datum} i din kalender!")
+            ai_data["score"] = pdf_analyzer.score_document(
+                ai_data,
+                vikt_omfattning=40,
+                vikt_premie=30,
+                vikt_självrisk=20,
+                vikt_övrigt=10
+            )
+
+            analysis_results.append({
+                "filename": uploaded_file.name,
+                "data": ai_data
+            })
+
+            with st.expander(f"💬 AI-rådgivning för {uploaded_file.name}", expanded=False):
+                ai_feedback = ask_openai(ai_data, industry)
+                st.markdown(ai_feedback)
+
+    if analysis_results:
+        st.markdown("""
+        ## 📊 Jämförelsetabell med färgkodning
+        """)
+        render_comparison_table(analysis_results)
+
+        st.markdown("""
+        ## 📑 Sammanställning & Jämförelse
+        """)
+        display_pretty_summary(analysis_results)
+
+        st.download_button("📥 Exportera resultat som Excel", export_excel.export_summary_excel(analysis_results), file_name="forsakringsjämforelse.xlsx")
+        st.download_button("📄 Exportera som PDF", export_pdf.export_summary_pdf(analysis_results), file_name="forsakringsjämforelse.pdf")
+        st.download_button("📝 Exportera som Word", export_word.generate_procurement_word(analysis_results), file_name="upphandlingsunderlag.docx")
